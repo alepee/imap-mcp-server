@@ -534,7 +534,9 @@ server talks to.
   - accountId: Account ID
   - folder: Folder name (default: INBOX)
   - uid: Email UID
-  - filename: Attachment filename or contentId
+  - filename: Attachment filename or contentId (as listed by imap_get_email; NFC/NFD
+      spellings of accented characters are treated as equal, and a contentId may
+      be passed with or without angle brackets)
   - savePath: Optional path inside IMAP_DOWNLOAD_DIR (relative paths resolve there). Must not already exist; outside paths and symlinks are rejected
   - extractText: Explicitly extract untrusted PDF text inline (default: false)
   - maxExtractedTextChars: Max PDF text characters (0–32000, default: 10000)

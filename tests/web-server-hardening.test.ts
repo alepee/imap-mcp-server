@@ -113,3 +113,25 @@ describe('Web wizard — loopback / cross-origin guard', () => {
     expect(res.status).toBe(200);
   });
 });
+
+// The guard above only inspects headers, which the caller controls. It is the
+// bind that decides who can reach the API at all, and the tests above never
+// exercise it — they listen on the app directly. Go through start().
+describe('Web wizard — listening interface', () => {
+  it('binds to loopback only, not to every interface', async () => {
+    const wizard = new WebUIServer(0, {
+      accountManager: fakeAccountManager as any,
+      imapService: {} as any,
+    });
+    await wizard.start(false);
+    const server = wizard.getServer();
+    try {
+      const address = server?.address() as AddressInfo;
+      // '0.0.0.0' or '::' here means a spoofed Host header reaches the account
+      // API from anywhere on the network.
+      expect(address.address).toBe('127.0.0.1');
+    } finally {
+      server?.close();
+    }
+  });
+});

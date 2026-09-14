@@ -4,6 +4,7 @@ import bodyParser from 'body-parser';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
+import type { Server } from 'http';
 import open from 'open';
 import { AccountManager } from '../services/account-manager.js';
 import { ImapService } from '../services/imap-service.js';
@@ -32,6 +33,7 @@ export class WebUIServer {
   private accountManager: AccountManager;
   private imapService: ImapService;
   private port: number;
+  private server?: Server;
 
   constructor(
     port: number = 3000,
@@ -49,6 +51,12 @@ export class WebUIServer {
   /** The configured Express application. Exposed for tests. */
   getApp(): express.Application {
     return this.app;
+  }
+
+  /** The listening HTTP server, once started. Exposed so tests can assert the
+   *  bound address — `getApp().listen()` bypasses start() and would not see it. */
+  getServer(): Server | undefined {
+    return this.server;
   }
 
   private setupMiddleware(): void {
@@ -354,7 +362,14 @@ export class WebUIServer {
 
   async start(autoOpen: boolean = true): Promise<void> {
     return new Promise((resolve) => {
-      const server = this.app.listen(this.port, () => {
+      // Bind to the loopback interface explicitly. Without a host argument
+      // Express listens on every interface, and `loopbackOnly()` — which only
+      // inspects the Host header — is then the sole gate on an unauthenticated,
+      // CORS-open account API. A Host header is attacker-controlled, so
+      // `curl -H "Host: localhost" http://<lan-ip>:3000/api/accounts` passes it
+      // from anywhere on the network. The bind is the real boundary; the header
+      // check stays as defence in depth against DNS rebinding.
+      const server = (this.server = this.app.listen(this.port, '127.0.0.1', () => {
         console.log(`🌐 Web UI server running at http://localhost:${this.port}`);
         
         if (autoOpen) {
@@ -365,7 +380,7 @@ export class WebUIServer {
         }
         
         resolve();
-      });
+      }));
 
       // Handle graceful shutdown
       process.on('SIGINT', () => {

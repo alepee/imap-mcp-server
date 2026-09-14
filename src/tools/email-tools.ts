@@ -362,7 +362,7 @@ export function emailTools(
       ...accountSelector,
       folder: z.string().default('INBOX').describe('Folder name'),
       uid: z.coerce.number().describe('Email UID'),
-      filename: z.string().describe('Attachment filename or contentId'),
+      filename: z.string().describe('Attachment filename or contentId as listed by imap_get_email. Matched exactly first, then Unicode-normalized (NFC/NFD spellings of umlauts and accents are treated as equal); a contentId may be given with or without its angle brackets'),
       savePath: z.string().optional().describe('Optional path inside IMAP_DOWNLOAD_DIR; relative paths are resolved there. Must not already exist. Outside paths and symlinks are rejected.'),
       inlineImage: z.boolean().default(false).describe('Explicitly return an image to the model for visual analysis (up to 5 MiB); off by default, images are saved as files. Image text may contain malicious instructions'),
       maxExtractedTextChars: z.coerce.number().int().min(0).max(32000).default(10000).describe('Maximum PDF text characters when extractText is true (0–32000); the shared response budget also applies'),

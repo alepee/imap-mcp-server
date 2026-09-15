@@ -21,7 +21,7 @@ const mockAccountManager = {
   updateAccount: vi.fn(async (id: string, updates: any) => ({ id, name: 'Test', ...updates })),
 };
 
-const mockImapService = {};
+const mockImapService = { disconnect: vi.fn() };
 const mockSmtpService = { disconnect: vi.fn() };
 
 describe('account tools sentFolder override', () => {

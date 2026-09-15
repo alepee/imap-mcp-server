@@ -51,6 +51,7 @@ describe('imap_download_attachment PDF text extraction (pdf-parse v2)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('IMAP_DOWNLOAD_DIR', tmpdir());
     emailTools(
       mockServer as any,
       mockImapService as any,
@@ -61,6 +62,7 @@ describe('imap_download_attachment PDF text extraction (pdf-parse v2)', () => {
 
   afterEach(() => {
     if (existsSync(savePath)) rmSync(savePath);
+    vi.unstubAllEnvs();
   });
 
   it('should be registered', () => {

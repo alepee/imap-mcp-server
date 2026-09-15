@@ -3,8 +3,10 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { ImapAccount } from '../types/index.js';
+import { ImapAccount, SmtpConfig } from '../types/index.js';
 import { ENV_CREDENTIAL_SUFFIXES, envVarName } from '../utils/env-credentials.js';
+
+export type AccountUpdates = Partial<Omit<ImapAccount, 'id' | 'smtp'>> & { smtp?: Partial<SmtpConfig> };
 
 export class AccountManager {
   private configPath: string;
@@ -24,82 +26,48 @@ export class AccountManager {
 
   async addAccount(account: Omit<ImapAccount, 'id'>): Promise<ImapAccount> {
     const id = crypto.randomUUID();
-    const newAccount: ImapAccount = {
-      ...account,
-      id,
-      password: this.encrypt(account.password),
-    };
-
-    // Encrypt SMTP password if provided
-    if (account.smtp?.password) {
-      newAccount.smtp = {
+    const stored = {
+      ...account, id, password: this.encrypt(account.password),
+      ...(account.smtp ? { smtp: {
         ...account.smtp,
-        password: this.encrypt(account.smtp.password),
-      };
-    }
-
-    this.accounts.set(id, newAccount);
-    await this.saveAccounts();
-    
-    return { ...newAccount, password: account.password, smtp: account.smtp };
+        ...(account.smtp.password !== undefined ? { password: this.encrypt(account.smtp.password) } : {}),
+      } } : {}),
+    };
+    await this.transaction(accounts => { accounts.set(id, stored); });
+    return { ...account, id };
   }
-
 
   async removeAccount(id: string): Promise<void> {
-    if (!this.accounts.has(id)) {
-      throw new Error(`Account ${id} not found`);
-    }
-
-    this.accounts.delete(id);
-    await this.saveAccounts();
+    await this.transaction(accounts => {
+      if (!accounts.delete(id)) throw new Error(`Account ${id} not found`);
+    });
   }
 
-  async updateAccount(id: string, updates: Partial<Omit<ImapAccount, 'id'>>): Promise<ImapAccount> {
-    const existingAccount = this.accounts.get(id);
-    if (!existingAccount) {
-      throw new Error(`Account with id ${id} not found`);
-    }
-
-    // Encrypt password if it's being updated. Use an explicit undefined check so
-    // an empty placeholder ("" — used for env-managed credentials) is encrypted
-    // to a decryptable value rather than stored raw.
-    const processedUpdates = { ...updates };
-    if (processedUpdates.password !== undefined) {
-      processedUpdates.password = this.encrypt(processedUpdates.password);
-    }
-    
-    // Encrypt SMTP password if it's being updated
-    if (processedUpdates.smtp?.password) {
-      processedUpdates.smtp = {
-        ...processedUpdates.smtp,
-        password: this.encrypt(processedUpdates.smtp.password),
-      };
-    }
-
-    // Merge updates with existing account
-    const updatedAccount: ImapAccount = {
-      ...existingAccount,
-      ...processedUpdates,
-      id, // Ensure ID doesn't change
+  async updateAccount(id: string, updates: AccountUpdates): Promise<ImapAccount> {
+    const updated = await this.transaction(accounts => {
+      const existing = accounts.get(id);
+      if (!existing) throw new Error(`Account with id ${id} not found`);
+      // Merge against the stored record, never a getter result: getters may
+      // contain environment overrides, which must never be persisted.
+      const { smtp, ...fields } = updates;
+      const next: ImapAccount = { ...existing, ...fields, id };
+      if (fields.password !== undefined) next.password = this.encrypt(fields.password);
+      if (smtp !== undefined) {
+        next.smtp = {
+          host: existing.host, port: 587, secure: false,
+          ...existing.smtp, ...Object.fromEntries(Object.entries(smtp).filter(([, value]) => value !== undefined)),
+        };
+        if (smtp.password !== undefined) next.smtp.password = this.encrypt(smtp.password);
+      }
+      accounts.set(id, next);
+      return next;
+    });
+    return {
+      ...updated, password: this.decryptField(updated.password),
+      ...(updated.smtp ? { smtp: { ...updated.smtp,
+        ...(updated.smtp.password !== undefined ? { password: this.decryptField(updated.smtp.password) } : {}),
+      } } : {}),
     };
-
-    this.accounts.set(id, updatedAccount);
-    await this.saveAccounts();
-
-    // Return decrypted version
-    const decrypted: ImapAccount = {
-      ...updatedAccount,
-      password: this.decrypt(updatedAccount.password),
-    };
-    
-    if (updatedAccount.smtp?.password) {
-      decrypted.smtp = {
-        ...updatedAccount.smtp,
-        password: this.decrypt(updatedAccount.smtp.password),
-      };
-    }
-    
-    return decrypted;
   }
 
   getAccount(id: string): ImapAccount | undefined {
@@ -215,6 +183,7 @@ export class AccountManager {
   }
 
   getAllAccounts(): ImapAccount[] {
+    this.loadAccountsSync();
     return Array.from(this.accounts.values()).map(account => {
       const decrypted: ImapAccount = {
         ...account,
@@ -270,6 +239,7 @@ export class AccountManager {
   }
 
   getAccountByName(name: string): ImapAccount | undefined {
+    this.loadAccountsSync();
     const account = Array.from(this.accounts.values()).find(acc => acc.name === name);
     if (!account) return undefined;
 
@@ -288,31 +258,74 @@ export class AccountManager {
     return this.applyEnvOverrides(decrypted);
   }
 
-  private loadAccountsSync(): void {
+  private readAccounts(): Map<string, ImapAccount> {
     try {
-      const data = readFileSync(this.configPath, 'utf-8');
-      const accounts = JSON.parse(data) as ImapAccount[];
-
-      this.accounts.clear();
-      for (const account of accounts) {
-        this.accounts.set(account.id, account);
+      const accounts = JSON.parse(readFileSync(this.configPath, 'utf-8'));
+      if (!Array.isArray(accounts) || accounts.some(account =>
+        !account || typeof account.id !== 'string' || typeof account.name !== 'string')) {
+        throw new Error('Invalid account store');
       }
+      const result = new Map<string, ImapAccount>(accounts.map(account => [account.id, account]));
+      if (result.size !== accounts.length) throw new Error('Duplicate account ids');
+      return result;
     } catch (error) {
-      // File doesn't exist yet, that's okay
-      if ((error as any).code !== 'ENOENT') {
-        console.error('Error loading accounts:', error);
-      }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
+      // JSON parser errors can include the input (and thus account secrets).
+      throw new Error('Cannot read account store; restore a valid accounts.json before continuing.');
     }
   }
 
-  private async saveAccounts(): Promise<void> {
+  private loadAccountsSync(): void {
+    this.accounts = this.readAccounts();
+  }
+
+  private async transaction<T>(change: (accounts: Map<string, ImapAccount>) => T): Promise<T> {
     const dir = path.dirname(this.configPath);
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const lockPath = this.configPath + '.lock';
+    const deadline = Date.now() + 5000;
+    // mkdir is exclusive across processes. Never steal a lock based on age:
+    // a paused writer could resume and overwrite a newer transaction.
+    for (;;) {
+      try {
+        await fs.mkdir(lockPath, { mode: 0o700 });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (Date.now() >= deadline) {
+          throw new Error('Account store is locked. Retry; after a crash, stop all server/wizard instances before removing accounts.json.lock.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    try {
+      const accounts = this.readAccounts();
+      const result = change(accounts);
+      await this.saveAccounts(accounts);
+      this.accounts = accounts;
+      return result;
+    } finally {
+      await fs.rmdir(lockPath);
+    }
+  }
 
-    const accounts = Array.from(this.accounts.values());
-    await fs.writeFile(this.configPath, JSON.stringify(accounts, null, 2), { mode: 0o600 });
-
-    await this.enforceStorePermissions();
+  private async saveAccounts(accounts: Map<string, ImapAccount>): Promise<void> {
+    const temporary = this.configPath + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      const file = await fs.open(temporary, 'wx', 0o600);
+      try {
+        await file.writeFile(JSON.stringify(Array.from(accounts.values()), null, 2));
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await fs.rename(temporary, this.configPath);
+      await this.enforceStorePermissions();
+    } finally {
+      await fs.unlink(temporary).catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+    }
   }
 
   /**
@@ -349,14 +362,34 @@ export class AccountManager {
     const keyPath = path.join(os.homedir(), '.imap-mcp', '.key');
     
     try {
-      return readFileSync(keyPath, 'utf-8');
-    } catch {
-      const key = crypto.randomBytes(32).toString('hex');
-      // Owner-only from the moment of creation: the key alone can decrypt every
-      // stored credential (see enforceStorePermissions).
-      mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
-      writeFileSync(keyPath, key, { mode: 0o600 });
+      const key = readFileSync(keyPath, 'utf-8');
+      if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error('Invalid encryption key; restore the original .key file.');
       return key;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // Losing the key must not silently create a replacement for an existing store.
+      try {
+        readFileSync(this.configPath, 'utf-8');
+      } catch (storeError) {
+        if ((storeError as NodeJS.ErrnoException).code !== 'ENOENT') throw storeError;
+        return this.createEncryptionKey(keyPath);
+      }
+      throw new Error('Encryption key is missing for the existing account store; restore the original .key file.');
+    }
+  }
+
+  private createEncryptionKey(keyPath: string): string {
+    const key = crypto.randomBytes(32).toString('hex');
+    mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
+    try {
+      writeFileSync(keyPath, key, { mode: 0o600, flag: 'wx' });
+      return key;
+    } catch (writeError) {
+      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
+      // Another process won creation. Never replace its key.
+      const existing = readFileSync(keyPath, 'utf-8');
+      if (!/^[a-f0-9]{64}$/i.test(existing)) throw new Error('Encryption key creation in progress; retry startup.');
+      return existing;
     }
   }
 

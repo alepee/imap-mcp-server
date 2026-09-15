@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { readAttachment } from '../utils/attachment-files.js';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { ImapAccount, EmailComposer, SmtpConfig } from '../types/index.js';
 import { parseSerializedArray } from '../utils/array-input.js';
@@ -21,6 +22,8 @@ export class SmtpService {
     const { secure, requireTLS } = this.resolveTlsMode(smtpConfig.port, smtpConfig.secure);
 
     const transporterOptions = {
+      disableUrlAccess: true,
+      disableFileAccess: true,
       host: smtpConfig.host,
       port: smtpConfig.port,
       secure,
@@ -98,6 +101,8 @@ export class SmtpService {
   private toMailOptions(account: ImapAccount, email: EmailComposer): nodemailer.SendMailOptions {
     const references = SmtpService.addresses(email.references, 'references');
     return {
+      disableUrlAccess: true,
+      disableFileAccess: true,
       from: email.from || account.email || account.user,
       to: SmtpService.addresses(email.to, 'to'),
       cc: SmtpService.addresses(email.cc, 'cc'),
@@ -107,8 +112,7 @@ export class SmtpService {
       html: email.html,
       attachments: email.attachments?.map(att => ({
         filename: att.filename,
-        content: att.content,
-        path: att.path,
+        content: att.path ? readAttachment(att.path) : att.content,
         contentType: att.contentType,
         contentDisposition: att.contentDisposition,
         cid: att.cid,
@@ -131,13 +135,15 @@ export class SmtpService {
 
   async sendEmail(accountId: string, account: ImapAccount, email: EmailComposer): Promise<{ messageId: string; rawMessage?: Buffer }> {
     try {
-      const transporter = await this.createTransporter(account);
       const mailOptions = this.toMailOptions(account, email);
+      const transporter = await this.createTransporter(account);
 
       // Build raw message for IMAP Sent folder append
       let rawMessage: Buffer | undefined;
       try {
-        rawMessage = await this.composeRaw(account, email);
+        const message = new MailComposer(mailOptions).compile();
+        message.keepBcc = true;
+        rawMessage = await message.build();
       } catch {
         // Non-critical: sent folder copy will be skipped
       }

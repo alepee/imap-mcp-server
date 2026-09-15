@@ -58,7 +58,7 @@ function request(opts: { method?: string; path: string; headers?: Record<string,
 }
 
 beforeAll(async () => {
-  const wizard = new WebUIServer(0, { accountManager: fakeAccountManager as any, imapService: {} as any });
+  const wizard = new WebUIServer(0, { accountManager: fakeAccountManager as any, imapService: { disconnect: async () => {} } as any });
   await new Promise<void>((resolve) => {
     httpServer = wizard.getApp().listen(0, () => resolve());
   });
@@ -121,7 +121,7 @@ describe('Web wizard — listening interface', () => {
   it('binds to loopback only, not to every interface', async () => {
     const wizard = new WebUIServer(0, {
       accountManager: fakeAccountManager as any,
-      imapService: {} as any,
+      imapService: { disconnect: async () => {} } as any,
     });
     await wizard.start(false);
     const server = wizard.getServer();

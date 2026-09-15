@@ -403,43 +403,53 @@ async function viewAccounts() {
         if (accounts.length === 0) {
             table.innerHTML = '<p class="text-gray-500 text-center py-8">No accounts configured yet.</p>';
         } else {
-            table.innerHTML = `
-                <table class="w-full">
-                    <thead>
-                        <tr class="border-b">
-                            <th class="text-left pb-2">Name</th>
-                            <th class="text-left pb-2">Email</th>
-                            <th class="text-left pb-2">Server</th>
-                            <th class="text-left pb-2">Status</th>
-                            <th class="text-right pb-2">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${accounts.map(account => `
-                            <tr class="border-b">
-                                <td class="py-3">${account.name}</td>
-                                <td class="py-3">${account.user}</td>
-                                <td class="py-3">${account.host}</td>
-                                <td class="py-3">
-                                    <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Active</span>
-                                </td>
-                                <td class="py-3 text-right">
-                                    <button onclick="editAccount('${account.id}')" class="text-blue-600 hover:text-blue-800 mr-2">
-                                        ✏️
-                                    </button>
-                                    <button onclick="removeAccount('${account.id}')" class="text-red-600 hover:text-red-800">
-                                        🗑️
-                                    </button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+            renderAccountTable(table, accounts);
         }
     } catch (error) {
         console.error('Failed to load accounts:', error);
     }
+}
+
+// Account fields are data, including values previously supplied through MCP.
+// Never put them into HTML or inline JavaScript event handlers.
+function renderAccountTable(container, accounts) {
+    const table = document.createElement('table');
+    table.className = 'w-full';
+    const head = document.createElement('thead');
+    const header = document.createElement('tr');
+    for (const label of ['Name', 'Email', 'Server', 'Status', 'Actions']) {
+        const cell = document.createElement('th');
+        cell.className = 'text-left pb-2';
+        cell.textContent = label;
+        header.appendChild(cell);
+    }
+    head.appendChild(header);
+    table.appendChild(head);
+    const body = document.createElement('tbody');
+    for (const account of accounts) {
+        const row = document.createElement('tr');
+        row.className = 'border-b';
+        for (const value of [account.name, account.user, account.host, 'Active']) {
+            const cell = document.createElement('td');
+            cell.className = 'py-3';
+            cell.textContent = value ?? '';
+            row.appendChild(cell);
+        }
+        const actions = document.createElement('td');
+        actions.className = 'py-3 text-right';
+        for (const [label, action] of [['✏️', editAccount], ['🗑️', removeAccount]]) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'text-blue-600 hover:text-blue-800 mr-2';
+            button.textContent = label;
+            button.addEventListener('click', () => action(account.id));
+            actions.appendChild(button);
+        }
+        row.appendChild(actions);
+        body.appendChild(row);
+    }
+    table.appendChild(body);
+    container.replaceChildren(table);
 }
 
 // Edit account

@@ -188,6 +188,14 @@ export class ImapService {
       host: account.host,
       port: account.port,
       secure: account.tls,
+      // Require the STARTTLS upgrade instead of accepting imapflow's default.
+      // Left undefined, imapflow attempts the upgrade and "if not supported,
+      // continue unencrypted" — its own docs call that a downgrade attack
+      // (imap-flow.js). An attacker who strips STARTTLS from the capability
+      // list would get the whole session, LOGIN included, in cleartext. With
+      // true, the connection fails instead. Only valid when secure is false:
+      // secure + doSTARTTLS together is rejected.
+      ...(account.tls ? {} : { doSTARTTLS: true }),
       // Validate the certificate against the host we actually dial. On a
       // STARTTLS upgrade imapflow passes no host to Node's TLS layer, and for
       // an IP host it also omits the SNI servername, so Node would otherwise
@@ -1598,6 +1606,9 @@ export class ImapService {
       host: account.host,
       port: account.port,
       secure: account.tls,
+      // Require the upgrade, as connect() does — a test that passes over a
+      // downgraded cleartext link would be worse than no test at all.
+      ...(account.tls ? {} : { doSTARTTLS: true }),
       // Validate the certificate against the host we actually dial; see connect().
       tls: { host: account.host },
       auth: {

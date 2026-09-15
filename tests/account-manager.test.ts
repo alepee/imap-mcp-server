@@ -12,6 +12,11 @@ vi.mock('fs', async () => {
       readFile: vi.fn(),
       writeFile: vi.fn(),
       mkdir: vi.fn(),
+      open: vi.fn(),
+      rename: vi.fn(),
+      unlink: vi.fn(),
+      rmdir: vi.fn(),
+      chmod: vi.fn(),
     },
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
@@ -29,13 +34,25 @@ describe('AccountManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Mock encryption key file
-    vi.mocked(readFileSync).mockReturnValue(mockEncryptionKey);
-
-    // Mock accounts file not existing initially
-    vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
-    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+    const files = new Map<string, string>();
+    vi.mocked(readFileSync).mockImplementation(((p: any) => {
+      if (String(p).endsWith('.key')) return mockEncryptionKey;
+      if (files.has(String(p))) return files.get(String(p));
+      throw Object.assign(new Error('Missing file'), { code: 'ENOENT' });
+    }) as any);
+    vi.mocked(fs.writeFile).mockImplementation(async (p: any, data: any) => { files.set(String(p), String(data)); });
+    vi.mocked(fs.open).mockImplementation((async (p: any) => ({
+      writeFile: (data: any) => fs.writeFile(p, data),
+      sync: async () => {}, close: async () => {},
+    })) as any);
+    vi.mocked(fs.rename).mockImplementation(async (from: any, to: any) => {
+      files.set(String(to), files.get(String(from))!);
+      files.delete(String(from));
+    });
+    vi.mocked(fs.unlink).mockResolvedValue(undefined);
+    vi.mocked(fs.rmdir).mockResolvedValue(undefined);
     vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+
   });
 
   afterEach(() => {
@@ -57,7 +74,7 @@ describe('AccountManager', () => {
 
     it('should create encryption key if not exists', () => {
       vi.mocked(readFileSync).mockImplementation(() => {
-        throw new Error('File not found');
+        throw Object.assign(new Error('File not found'), { code: 'ENOENT' });
       });
 
       const manager = new AccountManager();

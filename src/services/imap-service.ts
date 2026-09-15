@@ -1101,6 +1101,9 @@ export class ImapService {
     chunkSize: number = 50,
     onProgress?: (deleted: number, total: number) => void
   ): Promise<{ deleted: number; failed: number; errors: string[] }> {
+    if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > 1000) {
+      throw new Error('chunkSize must be an integer from 1 to 1000');
+    }
     const client = await this.ensureConnected(accountId);
     const trashFolder = await this.resolveTrashFolder(accountId);
     if (!trashFolder) {

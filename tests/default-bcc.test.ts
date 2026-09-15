@@ -58,7 +58,7 @@ describe('account tools defaultBcc override', () => {
     accountTools(
       mockServer as any,
       mockAccountManager as any,
-      {} as any,
+      { disconnect: vi.fn() } as any,
       { disconnect: vi.fn() } as any,
     );
   });

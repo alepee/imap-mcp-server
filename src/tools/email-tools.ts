@@ -8,8 +8,7 @@ import { mergeBcc } from '../utils/default-bcc.js';
 import type { EmailMessage, ImapAccount, SentSaveResult } from '../types/index.js';
 import { z } from 'zod';
 import { accountSelector } from './account-selector.js';
-import { join } from 'path';
-import { homedir } from 'os';
+import { attachmentPath, attachmentRoot, saveAttachment } from '../utils/attachment-files.js';
 import { randomBytes } from 'crypto';
 
 // "One or many" inputs. The union is what makes these convenient, and also what
@@ -68,7 +67,7 @@ const resolveBcc = (
 const attachmentSchema = z.object({
   filename: z.string().describe('Attachment filename'),
   content: z.string().optional().describe('Base64 encoded content'),
-  path: z.string().optional().describe('File path to attach'),
+  path: z.string().optional().describe('Local file inside IMAP_DOWNLOAD_DIR (e.g. the path returned by imap_upload_file). URLs and symlinks are rejected'),
   contentType: z.string().optional().describe('MIME type'),
   contentDisposition: z.enum(['attachment', 'inline']).optional().describe(
     'How the attachment is presented. Use "inline" for images referenced from the HTML body via cid: (e.g. a signature/footer banner); omit or use "attachment" for regular downloadable files.'
@@ -121,7 +120,6 @@ const sentSaveSuffix = (outcome: SentSaveOutcome) => {
   return '';
 };
 
-const DOWNLOAD_DIR = process.env.IMAP_DOWNLOAD_DIR || join(homedir(), 'Downloads', 'imap-attachments');
 const MAX_UPLOAD_SIZE = parseInt(process.env.IMAP_MAX_UPLOAD_SIZE ?? '', 10) || 25 * 1024 * 1024;
 const UPLOAD_TTL_MS = parseInt(process.env.IMAP_UPLOAD_TTL_MS ?? '', 10) || 24 * 60 * 60 * 1000;
 
@@ -312,8 +310,7 @@ export function emailTools(
     const fs = await import('fs');
     const path = await import('path');
 
-    const uploadDir = path.join(DOWNLOAD_DIR, 'uploads');
-    fs.mkdirSync(uploadDir, { recursive: true });
+    const uploadDir = path.dirname(attachmentPath('uploads/.probe', true));
 
     // TTL cleanup: remove stale uploads on each call
     const now = Date.now();
@@ -321,7 +318,7 @@ export function emailTools(
       for (const entry of fs.readdirSync(uploadDir)) {
         const entryPath = path.join(uploadDir, entry);
         try {
-          const stat = fs.statSync(entryPath);
+          const stat = fs.lstatSync(entryPath);
           if (stat.isFile() && now - stat.mtimeMs > UPLOAD_TTL_MS) {
             fs.unlinkSync(entryPath);
           }
@@ -340,9 +337,7 @@ export function emailTools(
 
     const sanitizedFilename = path.basename(filename);
     const uniquePrefix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
-    const targetPath = path.join(uploadDir, `${uniquePrefix}-${sanitizedFilename}`);
-
-    fs.writeFileSync(targetPath, buffer);
+    const targetPath = saveAttachment(sanitizedFilename, buffer, path.join(attachmentRoot(), 'uploads', `${uniquePrefix}-${sanitizedFilename}`));
 
     return {
       content: [{
@@ -362,13 +357,13 @@ export function emailTools(
 
   // Download attachment tool
   server.registerTool('imap_download_attachment', {
-    description: 'Download a single attachment from an email (folder + uid + attachment filename/contentId, as listed by imap_get_email). Images are returned inline for viewing; PDFs are saved and their text is extracted inline (extractText); other files are saved to the shared downloads directory (or savePath). Use when the user wants the actual file contents, not just the message body.',
+    description: 'Download a single attachment from an email (folder + uid + attachment filename/contentId, as listed by imap_get_email). Images are returned inline for viewing; PDFs are saved and their text is extracted inline (extractText); other files are saved inside IMAP_DOWNLOAD_DIR. savePath must stay inside that directory; URLs, symlinks, and overwriting an existing savePath are rejected. Default filenames get a unique prefix on collision. Use when the user wants the actual file contents, not just the message body.',
     inputSchema: {
       ...accountSelector,
       folder: z.string().default('INBOX').describe('Folder name'),
       uid: z.coerce.number().describe('Email UID'),
       filename: z.string().describe('Attachment filename or contentId'),
-      savePath: z.string().optional().describe('Optional file path to save the attachment to. If not provided, files are saved to the shared downloads directory.'),
+      savePath: z.string().optional().describe('Optional path inside IMAP_DOWNLOAD_DIR; relative paths are resolved there. Must not already exist. Outside paths and symlinks are rejected.'),
       extractText: z.boolean().default(true).describe('For PDFs, extract and return text content inline'),
     }
   }, async ({ accountId: rawAccountId, accountName, folder, uid, filename, savePath, extractText }) => {
@@ -411,15 +406,7 @@ export function emailTools(
         }
 
         // Also save the file for binary access
-        const fs = await import('fs');
-        const path = await import('path');
-        const downloadDir = savePath ? path.dirname(savePath) : DOWNLOAD_DIR;
-        fs.mkdirSync(downloadDir, { recursive: true });
-        // resolvedFilename comes from the (sender-controlled) MIME headers, so it
-        // may contain path-traversal segments like "../../". Confine the default
-        // save to DOWNLOAD_DIR via basename; an explicit savePath is caller-chosen.
-        const targetPath = savePath || path.join(DOWNLOAD_DIR, path.basename(resolvedFilename));
-        fs.writeFileSync(targetPath, content);
+        const targetPath = saveAttachment(resolvedFilename, content, savePath);
 
         return {
           content: [{
@@ -441,15 +428,7 @@ export function emailTools(
       }
     }
 
-    // Save to shared downloads directory
-    const fs = await import('fs');
-    const path = await import('path');
-    const downloadDir = savePath ? path.dirname(savePath) : DOWNLOAD_DIR;
-    fs.mkdirSync(downloadDir, { recursive: true });
-    // Confine the default save to DOWNLOAD_DIR: resolvedFilename is sender-
-    // controlled and may contain "../" traversal (savePath is caller-chosen).
-    const targetPath = savePath || path.join(DOWNLOAD_DIR, path.basename(resolvedFilename));
-    fs.writeFileSync(targetPath, content);
+    const targetPath = saveAttachment(resolvedFilename, content, savePath);
 
     return {
       content: [{
@@ -737,12 +716,12 @@ export function emailTools(
 
   // Bulk delete emails tool
   server.registerTool('imap_bulk_delete', {
-    description: 'Delete multiple emails at once with chunking and auto-reconnection. Processes deletions in batches to prevent connection timeouts.',
+    description: 'Delete multiple emails at once with chunking and auto-reconnection. Processes deletions in batches to prevent connection timeouts. chunkSize must be an integer from 1 to 1000.',
     inputSchema: {
       ...accountSelector,
       folder: z.string().default('INBOX').describe('Folder name'),
       uids: z.array(z.coerce.number()).describe('Array of email UIDs to delete'),
-      chunkSize: z.coerce.number().default(50).describe('Number of emails to delete per batch (default: 50)'),
+      chunkSize: z.coerce.number().int().min(1).max(1000).default(50).describe('Number of emails per batch: integer from 1 to 1000 (default: 50)'),
     }
   }, async ({ accountId: rawAccountId, accountName, folder, uids, chunkSize }) => {
     const accountId = accountManager.resolveAccountId(rawAccountId, accountName);
@@ -767,7 +746,7 @@ export function emailTools(
 
   // Bulk delete by search criteria tool
   server.registerTool('imap_bulk_delete_by_search', {
-    description: 'Search for emails matching criteria and delete them all. Useful for cleaning up spam or unwanted emails. At least one concrete criterion (from, to, subject, before, or since) is REQUIRED — a call with no criteria is refused so it can never wipe an entire folder. Supports dryRun to preview matches first.',
+    description: 'Search for emails matching criteria and delete them all. chunkSize must be an integer from 1 to 1000. Useful for cleaning up spam or unwanted emails. At least one concrete criterion (from, to, subject, before, or since) is REQUIRED — a call with no criteria is refused so it can never wipe an entire folder. Supports dryRun to preview matches first.',
     inputSchema: {
       ...accountSelector,
       folder: z.string().default('INBOX').describe('Folder name'),
@@ -776,7 +755,7 @@ export function emailTools(
       subject: z.string().optional().describe('Delete emails with this subject'),
       before: z.string().optional().describe('Delete emails before this date (YYYY-MM-DD)'),
       since: z.string().optional().describe('Delete emails since this date (YYYY-MM-DD)'),
-      chunkSize: z.coerce.number().default(50).describe('Number of emails to delete per batch'),
+      chunkSize: z.coerce.number().int().min(1).max(1000).default(50).describe('Number of emails per batch: integer from 1 to 1000 (default: 50)'),
       dryRun: z.boolean().default(false).describe('If true, only return what would be deleted without actually deleting'),
     }
   }, async ({ accountId: rawAccountId, accountName, folder, from, to, subject, before, since, chunkSize, dryRun }) => {
@@ -892,7 +871,7 @@ export function emailTools(
 
   // Send email tool
   server.registerTool('imap_send_email', {
-    description: 'Compose and send a NEW email via the account\'s SMTP server (a copy is saved to Sent unless disabled; account defaultBcc addresses are always BCC\'d when configured). Use for fresh outbound messages. To respond to an existing message use imap_reply_to_email (keeps threading); to pass a message on use imap_forward_email; to store without sending use imap_save_draft. Supports to/cc/bcc, text and/or HTML, and attachments by base64 content or by file path (see imap_upload_file for large files).',
+    description: 'Compose and send a NEW email via the account\'s SMTP server (a copy is saved to Sent unless disabled; account defaultBcc addresses are always BCC\'d when configured). Use for fresh outbound messages. To respond to an existing message use imap_reply_to_email (keeps threading); to pass a message on use imap_forward_email; to store without sending use imap_save_draft. Supports to/cc/bcc, text and/or HTML, and attachments by base64 content or by local file path inside IMAP_DOWNLOAD_DIR (see imap_upload_file for large files); URLs and symlinks are rejected.',
     inputSchema: {
       ...accountSelector,
       to: addressList('to', 'Recipient email address(es). Either an array of addresses or a single comma-separated string; both accept "Name <addr@example.com>" form.').nonoptional(),

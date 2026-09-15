@@ -90,7 +90,7 @@ export function accountTools(
 
   // Update account tool — lets callers fix SMTP config (and other fields) on existing accounts
   server.registerTool('imap_update_account', {
-    description: 'Update an existing IMAP account. Useful for fixing SMTP settings without removing and re-adding the account.',
+    description: 'Update an existing IMAP account. Useful for fixing SMTP settings without removing and re-adding the account. Omitted SMTP credentials are preserved; environment overrides are never copied to storage by a partial update.',
     inputSchema: {
       accountId: z.string().describe('ID of the account to update'),
       name: z.string().optional().describe('New friendly name'),
@@ -141,22 +141,20 @@ export function accountTools(
 
     const smtpTouched = [smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword].some(v => v !== undefined);
     if (smtpTouched) {
-      const current = existing.smtp;
       updates.smtp = {
-        host: smtpHost ?? current?.host ?? existing.host,
-        port: smtpPort ?? current?.port ?? 587,
-        secure: smtpSecure ?? current?.secure ?? false,
-        ...(smtpUser !== undefined ? { user: smtpUser } : current?.user ? { user: current.user } : {}),
+        ...(smtpHost !== undefined ? { host: smtpHost } : {}),
+        ...(smtpPort !== undefined ? { port: smtpPort } : {}),
+        ...(smtpSecure !== undefined ? { secure: smtpSecure } : {}),
+        ...(smtpUser !== undefined ? { user: smtpUser } : {}),
         ...(smtpPassword !== undefined ? { password: smtpPassword } : {}),
       };
     }
 
-    // Invalidate any cached SMTP transporter so the next send picks up new config
-    if (smtpTouched) {
-      smtpService.disconnect(accountId);
-    }
-
     const updated = await accountManager.updateAccount(accountId, updates);
+    // Both protocols can inherit the IMAP credentials. Reconnect after a
+    // successful update so cached sessions cannot retain old credentials.
+    smtpService.disconnect(accountId);
+    await imapService.disconnect(accountId);
 
     return {
       content: [{

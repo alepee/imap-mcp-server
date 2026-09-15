@@ -587,7 +587,7 @@ server talks to.
   - folder: Folder name (default: INBOX)
   - uid: Email UID
   - filename: Attachment filename or contentId
-  - savePath: Optional file path to save the attachment to
+  - savePath: Optional path inside IMAP_DOWNLOAD_DIR (relative paths resolve there). Must not already exist; outside paths and symlinks are rejected
   - extractText: For PDFs, extract and return text content inline (default: true)
   ```
 
@@ -597,7 +597,7 @@ server talks to.
   - accountId: Account ID
   - folder: Folder name (default: INBOX)
   - uids: Array of email UIDs to delete
-  - chunkSize: Emails to delete per batch (default: 50)
+  - chunkSize: Emails to delete per batch (integer 1–1000, default: 50)
   ```
 
 - **imap_bulk_delete_by_search**: Search for emails matching criteria and delete them all
@@ -607,7 +607,7 @@ server talks to.
   - folder: Folder name (default: INBOX)
   - from, to, subject: Search criteria (optional)
   - before, since: Date filters (optional)
-  - chunkSize: Emails to delete per batch (default: 50)
+  - chunkSize: Emails to delete per batch (integer 1–1000, default: 50)
   - dryRun: Preview what would be deleted without deleting (default: false)
   ```
   At least one concrete criterion (`from`, `to`, `subject`, `before`, or `since`)
@@ -628,7 +628,7 @@ server talks to.
   - attachments: Array of attachments (optional)
     - filename: Attachment filename
     - content: Base64 encoded content
-    - path: File path to attach
+    - path: Local file path inside IMAP_DOWNLOAD_DIR (URLs and symlinks rejected)
     - contentType: MIME type
     - contentDisposition: "attachment" (default) or "inline" — use "inline" for images shown in the HTML body via cid:
     - cid: Content-ID for inline attachments; must match the `cid:` value used in an `<img src="cid:...">` tag in `html`
@@ -722,8 +722,26 @@ server talks to.
 - The store directory, `.key`, and `accounts.json` are written owner-only
   (`0700`/`0600`) so other local users cannot read the key or the credentials
 - The web setup wizard's HTTP API never returns stored passwords to the browser
-- Downloaded attachments are confined to the downloads directory; sender-supplied
-  filenames cannot write outside it
+- Attachment reads and writes are confined to `IMAP_DOWNLOAD_DIR` (default:
+  `~/Downloads/imap-attachments`), including explicit `savePath` values. Child
+  symlinks, special files and URLs are rejected. Files outside that directory must
+  first be supplied with `imap_upload_file` or copied there locally. Existing files
+  are never overwritten: an explicit conflicting `savePath` fails, while automatic
+  filenames receive a unique prefix on collision. This restriction also applies
+  when the download tool is exposed in read-only mode (which protects mailboxes).
+- Account names, usernames and hosts are rendered as text in the setup wizard.
+- Partial SMTP updates preserve omitted credentials from the encrypted store;
+  environment overrides are not copied back to disk. Blank password inputs in the
+  wizard keep the current password; its environment-management flags explicitly
+  store an empty placeholder instead.
+- Account mutations reload the latest store under an exclusive cross-process lock
+  and replace it atomically after flushing a temporary file. Invalid JSON blocks
+  writes instead of being silently discarded. Concurrent writers must all use this
+  version: stop older server/wizard instances before upgrading.
+- Writers wait up to five seconds for `~/.imap-mcp/accounts.json.lock`. After a
+  process crash, stop **all** server/wizard instances before removing that leftover
+  lock directory and restarting. A lock is never automatically stolen based on age.
+  Missing or invalid encryption keys are not replaced for an existing store.
 - Never commit or share your encryption key or account configurations
 
 ## Development

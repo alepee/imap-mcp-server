@@ -276,15 +276,17 @@ export class WebUIServer {
         // Env-managed password → empty placeholder; otherwise only update when sent.
         if (imapPasswordFromEnv) {
           updates.password = '';
-        } else if (password !== undefined) {
+        } else if (password !== undefined && password !== '') {
           updates.password = password;
         }
         if (host !== undefined) updates.host = host;
         if (port !== undefined) updates.port = port;
         if (tls !== undefined) updates.tls = tls;
         if (smtp !== undefined) {
+          const { password: smtpPassword, ...smtpFields } = smtp;
           updates.smtp = {
-            ...smtp,
+            ...smtpFields,
+            ...(smtpPassword !== undefined && smtpPassword !== '' ? { password: smtpPassword } : {}),
             ...(smtpUsernameFromEnv ? { user: '' } : {}),
             ...(smtpPasswordFromEnv ? { password: '' } : {}),
           };
@@ -308,6 +310,7 @@ export class WebUIServer {
         // passwords). A no-op update (e.g. a rename with no password supplied)
         // would otherwise hand every stored secret back over the wire — strip.
         const account = await this.accountManager.updateAccount(req.params.id, updates);
+        await this.imapService.disconnect(req.params.id);
         res.json({ success: true, account: stripAccountSecrets(account) });
       } catch (error) {
         res.status(400).json({ 

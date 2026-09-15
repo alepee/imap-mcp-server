@@ -98,6 +98,18 @@ describe('imap_download_attachment PDF text extraction (pdf-parse v2)', () => {
     expect(readFileSync(savePath).subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
+  it('limits explicitly extracted PDF text and reports truncation', async () => {
+    mockImapService.getAttachmentContent.mockResolvedValueOnce({
+      content: makePdf('A long synthetic attachment body'), contentType: 'application/pdf', filename: 'bounded.pdf',
+    });
+    const result = await downloadHandler({ accountId: 'acc1', folder: 'INBOX', uid: 1,
+      filename: 'bounded.pdf', savePath, extractText: true, maxExtractedTextChars: 5 });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.textContent).toHaveLength(5);
+    expect(parsed.textContentTruncated).toBe(true);
+    expect(existsSync(savePath)).toBe(true);
+  });
+
   it('falls back to save-only when the PDF cannot be parsed', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockImapService.getAttachmentContent.mockResolvedValueOnce({

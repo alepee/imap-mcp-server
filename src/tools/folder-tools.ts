@@ -3,13 +3,7 @@ import { ImapService } from '../services/imap-service.js';
 import { AccountManager } from '../services/account-manager.js';
 import { isSystemFlag } from '../types/index.js';
 import { z } from 'zod';
-
-// Backward-compatible account selector (accountId stays accepted; accountName
-// and the single-account default are additive conveniences).
-const accountSelector = {
-  accountId: z.string().optional().describe('Account ID (from imap_list_accounts). Optional if accountName is given or only one account is configured.'),
-  accountName: z.string().optional().describe('Account name instead of accountId. Optional if accountId is given or only one account is configured.'),
-};
+import { accountSelector } from './account-selector.js';
 
 export function folderTools(
   server: McpServer,

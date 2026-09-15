@@ -144,7 +144,7 @@ export class WebUIServer {
     this.app.post('/api/accounts', async (req, res) => {
       try {
         const {
-          name, email, password, host, port, tls, smtp, imapUsername, sentFolder, defaultBcc,
+          name, email, password, host, port, tls, smtp, imapUsername, sentFolder, defaultBcc, tlsCa,
           imapUsernameFromEnv, imapPasswordFromEnv,
           smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
@@ -184,6 +184,7 @@ export class WebUIServer {
           ...(defaultBcc !== undefined && defaultBcc !== '' && !(Array.isArray(defaultBcc) && defaultBcc.length === 0)
             ? { defaultBcc }
             : {}),
+          ...(typeof tlsCa === 'string' && tlsCa ? { tlsCa } : {}),
         });
 
         // addAccount returns the plaintext password back; never echo it.
@@ -199,9 +200,10 @@ export class WebUIServer {
     // Test connection
     this.app.post('/api/test-connection', async (req, res) => {
       try {
-        const { email, password, host, port, tls, imapUsername } = req.body;
+        const { email, password, host, port, tls, imapUsername, tlsCa } = req.body;
 
-        // Create temporary account for testing
+        // Create temporary account for testing. tlsCa is carried through so the
+        // wizard can test a local-bridge account before it is saved.
         const testAccount: ImapAccount = {
           id: 'test-' + Date.now(),
           name: 'Test',
@@ -210,6 +212,7 @@ export class WebUIServer {
           user: imapUsername || email,
           password,
           tls: tls !== false,
+          ...(typeof tlsCa === 'string' && tlsCa ? { tlsCa } : {}),
         };
         
         // Try to connect
@@ -250,7 +253,7 @@ export class WebUIServer {
     this.app.put('/api/accounts/:id', async (req, res) => {
       try {
         const {
-          name, email, password, host, port, tls, smtp, saveToSent, imapUsername, sentFolder, defaultBcc,
+          name, email, password, host, port, tls, smtp, saveToSent, imapUsername, sentFolder, defaultBcc, tlsCa,
           imapUsernameFromEnv, imapPasswordFromEnv,
           smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
@@ -294,6 +297,9 @@ export class WebUIServer {
             updates.defaultBcc = defaultBcc;
           }
         }
+
+        // Empty string clears the CA and restores the default trust store.
+        if (typeof tlsCa === 'string') updates.tlsCa = tlsCa === '' ? undefined : tlsCa;
 
         // updateAccount returns a DECRYPTED account (plaintext IMAP + SMTP
         // passwords). A no-op update (e.g. a rename with no password supplied)

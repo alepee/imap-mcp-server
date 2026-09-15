@@ -334,6 +334,9 @@ Once configured, the IMAP MCP server provides the following tools in Claude:
   - defaultBcc: Optional BCC address(es) applied automatically to every
       outbound send, reply, forward, and draft for this account. Merged with
       any per-call `bcc` (duplicates removed case-insensitively)
+  - tlsCa: Extra CA certificate to trust for this account's IMAP TLS — a path
+      to a PEM file (a leading `~` is expanded) or the PEM text itself. See
+      "Local bridges" below
   ```
 
 - **imap_update_account**: Update an existing account (fix SMTP settings, rename, etc.)
@@ -347,7 +350,37 @@ Once configured, the IMAP MCP server provides the following tools in Claude:
       to clear the override and re-enable auto-detection
   - defaultBcc: Optional default BCC address(es) (optional). Pass an empty
       string to clear
+  - tlsCa: Extra CA certificate for this account's IMAP TLS (optional). Pass an
+      empty string to clear it and go back to the system trust store
   ```
+
+#### Local bridges (Proton Mail Bridge, and friends)
+
+Proton Mail Bridge listens on `127.0.0.1:1143` and serves a **self-signed**
+certificate, so a plain connection fails with:
+
+```
+DEPTH_ZERO_SELF_SIGNED_CERT self-signed certificate
+```
+
+Export the certificate the bridge actually presents and point the account at
+it:
+
+```bash
+openssl s_client -connect 127.0.0.1:1143 -starttls imap -showcerts </dev/null \
+  | awk '/BEGIN CERT/,/END CERT/' > ~/.imap-mcp/proton-bridge-ca.pem
+```
+
+then set `tlsCa` to `~/.imap-mcp/proton-bridge-ca.pem` on the account. Note the
+bridge requires **STARTTLS**, so the account also needs `tls: false` — with
+`tls: true` the connection fails with `wrong version number`, which is a
+protocol mismatch, not a certificate problem.
+
+`tlsCa` **extends** trust for that one account; it never disables verification,
+and it never widens trust for any other connection the process makes. Prefer it
+over `NODE_EXTRA_CA_CERTS`, which applies process-wide — a bridge CA carries no
+name constraints, so trusting it globally would let it vouch for any host the
+server talks to.
 
 - **imap_list_accounts**: List all configured accounts
 

@@ -27,8 +27,9 @@ export function accountTools(
       smtpSecure: z.boolean().optional().describe('Use implicit TLS (SMTPS). Ignored for port 587/25 which always use STARTTLS, and for port 465 which always uses implicit TLS'),
       sentFolder: z.string().optional().describe('Explicit Sent-folder name for saving sent-mail copies (e.g. "Gesendet"). Only needed when auto-detection fails — the server must lack a \\Sent SPECIAL-USE folder. Check names with imap_list_folders'),
       defaultBcc: z.union([z.string(), z.array(z.string())]).optional().describe('Optional BCC address(es) applied automatically to every outbound send, reply, forward, and draft for this account. Merged with any per-call bcc'),
+      tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Needed for a local bridge serving a self-signed certificate, e.g. Proton Mail Bridge on 127.0.0.1:1143. Scoped to this account only'),
     }
-  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc }) => {
+  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc, tlsCa }) => {
     const smtp = (smtpHost || smtpPort !== undefined || smtpSecure !== undefined)
       ? {
           host: smtpHost || host,
@@ -50,6 +51,7 @@ export function accountTools(
       ...(defaultBcc !== undefined && defaultBcc !== '' && !(Array.isArray(defaultBcc) && defaultBcc.length === 0)
         ? { defaultBcc }
         : {}),
+      ...(tlsCa ? { tlsCa } : {}),
     });
 
     return {
@@ -84,8 +86,9 @@ export function accountTools(
       saveToSent: z.boolean().optional().describe('Save sent emails to the Sent folder'),
       sentFolder: z.string().optional().describe('Explicit Sent-folder name for saving sent-mail copies (e.g. "Gesendet"). Overrides auto-detection; pass an empty string to clear the override and re-enable auto-detection. Check names with imap_list_folders'),
       defaultBcc: z.union([z.string(), z.array(z.string())]).optional().describe('Optional BCC address(es) applied automatically to every outbound message for this account. Pass an empty string to clear'),
+      tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Pass an empty string to clear and go back to the system trust store'),
     }
-  }, async ({ accountId, name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, saveToSent, sentFolder, defaultBcc }) => {
+  }, async ({ accountId, name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, saveToSent, sentFolder, defaultBcc, tlsCa }) => {
     const existing = accountManager.getAccount(accountId);
     if (!existing) {
       throw new Error(`Account ${accountId} not found`);
@@ -110,6 +113,9 @@ export function accountTools(
         updates.defaultBcc = defaultBcc;
       }
     }
+
+    // Empty string clears the CA and restores the default trust store.
+    if (tlsCa !== undefined) updates.tlsCa = tlsCa === '' ? undefined : tlsCa;
 
     const smtpTouched = [smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword].some(v => v !== undefined);
     if (smtpTouched) {

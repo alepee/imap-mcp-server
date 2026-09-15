@@ -98,20 +98,20 @@ describe('resolveEnabledTools', () => {
     expect(set).toEqual(new Set(['imap_list_folders', 'imap_folder_status']));
   });
 
-  it('gives IMAP_MCP_ENABLED_TOOLS precedence over IMAP_MCP_READ_ONLY', () => {
+  it('does not let the allowlist override read-only mode', () => {
     const set = resolveEnabledTools({
       IMAP_MCP_ENABLED_TOOLS: 'imap_send_email',
       IMAP_MCP_READ_ONLY: 'true',
     });
-    expect(set).toEqual(new Set(['imap_send_email']));
+    expect(set).toEqual(new Set());
   });
 
-  it('falls back to read-only when the explicit list is blank', () => {
+  it('enables no tools when the explicit list is blank', () => {
     const set = resolveEnabledTools({
       IMAP_MCP_ENABLED_TOOLS: '  ,, ',
       IMAP_MCP_READ_ONLY: 'true',
     });
-    expect(set).toEqual(new Set(READ_ONLY_TOOLS));
+    expect(set).toEqual(new Set());
   });
 });
 
@@ -149,6 +149,18 @@ describe('registerTools gating', () => {
     for (const tool of DESTRUCTIVE_TOOLS) {
       expect(names).not.toContain(tool);
     }
+  });
+
+  it('intersects the allowlist with read-only tools', () => {
+    const names = registeredToolsFor({
+      IMAP_MCP_ENABLED_TOOLS: 'imap_search_emails,imap_send_email,imap_update_account',
+      IMAP_MCP_READ_ONLY: 'true',
+    });
+    expect(names).toEqual(['imap_search_emails']);
+  });
+
+  it('fails closed on a misspelled read-only setting', () => {
+    expect(() => registeredToolsFor({ IMAP_MCP_READ_ONLY: 'treu' })).toThrow(/IMAP_MCP_READ_ONLY/);
   });
 
   it('registers only the explicit allowlist', () => {

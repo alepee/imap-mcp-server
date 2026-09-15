@@ -6,6 +6,7 @@ import { AccountManager } from './services/account-manager.js';
 import { SmtpService } from './services/smtp-service.js';
 import { SpamService } from './services/spam-service.js';
 import { registerTools } from './tools/index.js';
+import { MAIL_CONTENT_INSTRUCTIONS } from './utils/untrusted-content.js';
 
 // Silence any package version output to stdout
 const originalWrite = process.stdout.write.bind(process.stdout);
@@ -22,7 +23,7 @@ dotenv.config();
 const server = new McpServer({
   name: 'imap-mcp-server',
   version: '1.0.0',
-});
+}, { instructions: MAIL_CONTENT_INSTRUCTIONS });
 
 const imapService = new ImapService();
 const accountManager = new AccountManager();

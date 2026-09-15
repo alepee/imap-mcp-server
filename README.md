@@ -311,8 +311,8 @@ The read-only subset is: `imap_list_accounts`, `imap_connect`, `imap_disconnect`
 
 Once configured, the IMAP MCP server provides the following tools in Claude:
 
-> **Choosing an account.** For the email and folder tools, `accountId` is
-> **optional** and backward-compatible. You may instead pass `accountName`, and
+> **Choosing an account.** For the email, folder and account-test tools,
+> `accountId` is **optional** and backward-compatible. You may instead pass `accountName`, and
 > if you only have a **single** account configured you can omit both — that
 > account is used by default. With multiple accounts and no selector, the tool
 > returns a clear error listing your options (`imap_list_accounts`).
@@ -368,6 +368,13 @@ Once configured, the IMAP MCP server provides the following tools in Claude:
   Parameters:
   - accountId: Account to disconnect
   ```
+
+- **imap_test_account**: Test a configured account without re-entering credentials
+  ```
+  Parameters:
+  - accountId OR accountName: Account identifier (optional with a single account)
+  ```
+  Returns folder count and message count on success.
 
 ### Email Operations
 

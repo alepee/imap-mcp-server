@@ -3,6 +3,7 @@ import { AccountManager } from '../services/account-manager.js';
 import { ImapService } from '../services/imap-service.js';
 import { SmtpService } from '../services/smtp-service.js';
 import { z } from 'zod';
+import { accountSelector } from './account-selector.js';
 
 export function accountTools(
   server: McpServer,
@@ -247,9 +248,10 @@ export function accountTools(
   server.registerTool('imap_test_account', {
     description: 'Test an existing account connection without re-entering credentials. Validates IMAP connectivity and returns folder count and message count.',
     inputSchema: {
-      accountId: z.string().describe('Account ID to test'),
+      ...accountSelector,
     }
-  }, async ({ accountId }) => {
+  }, async ({ accountId: rawAccountId, accountName }) => {
+    const accountId = accountManager.resolveAccountId(rawAccountId, accountName);
     const account = accountManager.getAccount(accountId);
     if (!account) {
       throw new Error(`Account ${accountId} not found`);

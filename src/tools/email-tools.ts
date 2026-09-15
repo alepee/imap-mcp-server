@@ -7,16 +7,10 @@ import { parseSerializedArray } from '../utils/array-input.js';
 import { mergeBcc } from '../utils/default-bcc.js';
 import type { EmailMessage, ImapAccount, SentSaveResult } from '../types/index.js';
 import { z } from 'zod';
+import { accountSelector } from './account-selector.js';
 import { join } from 'path';
 import { homedir } from 'os';
 import { randomBytes } from 'crypto';
-
-// Reusable, backward-compatible account selector. accountId stays accepted as
-// before; accountName and the single-account default are additive conveniences.
-const accountSelector = {
-  accountId: z.string().optional().describe('Account ID (from imap_list_accounts). Optional if accountName is given or only one account is configured.'),
-  accountName: z.string().optional().describe('Account name instead of accountId. Optional if accountId is given or only one account is configured.'),
-};
 
 // "One or many" inputs. The union is what makes these convenient, and also what
 // makes them fragile: clients that flatten the schema's anyOf hand the model an

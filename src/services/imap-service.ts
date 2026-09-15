@@ -4,6 +4,7 @@ import { ImapAccount, EmailMessage, EmailContent, EmailBodyFormat, EmailLocation
 import type { AccountManager } from './account-manager.js';
 import { htmlToMarkdown, normalizeWhitespace } from './html-to-markdown.js';
 import { assertCredentialsResolved } from '../utils/env-credentials.js';
+import { resolveTlsCa } from '../utils/tls-ca.js';
 
 /**
  * Providers that require IMAP access to be manually enabled in account settings.
@@ -179,6 +180,10 @@ export class ImapService {
     // credential and getting back an indistinguishable "AUTHENTICATE failed".
     assertCredentialsResolved(account, 'imap');
 
+    // Resolve before dialing: an unreadable CA path should name the file, not
+    // surface later as an opaque certificate error.
+    const ca = resolveTlsCa(account.tlsCa);
+
     const client = new ImapFlow({
       host: account.host,
       port: account.port,
@@ -188,7 +193,12 @@ export class ImapService {
       // an IP host it also omits the SNI servername, so Node would otherwise
       // check the cert against a default of "localhost" and reject a cert
       // bound to e.g. 127.0.0.1 (local bridges like ProtonMail Bridge).
-      tls: { host: account.host },
+      //
+      // `ca` extends the trust store for THIS connection only. That is what
+      // makes a local bridge's self-signed certificate usable without turning
+      // verification off, and without the process-wide reach of
+      // NODE_EXTRA_CA_CERTS.
+      tls: { host: account.host, ...(ca ? { ca } : {}) },
       auth: {
         user: account.user,
         pass: account.password,

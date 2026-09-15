@@ -21,6 +21,12 @@ export interface ImapAccount {
    * and draft. Merged with any per-call `bcc` (call-site values win for
    * ordering; duplicates are removed case-insensitively). */
   defaultBcc?: string | string[];
+  /** Extra CA certificate to trust for this account's IMAP TLS, as a path to a
+   * PEM file (a leading `~` is expanded) or the PEM text itself. Needed for a
+   * local bridge that serves a self-signed certificate, such as Proton Mail
+   * Bridge on 127.0.0.1:1143. Scoped to this account: it never widens trust for
+   * any other connection the process makes. */
+  tlsCa?: string;
 }
 
 export interface SmtpConfig {

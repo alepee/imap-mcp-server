@@ -4,7 +4,7 @@ A powerful Model Context Protocol (MCP) server that provides seamless IMAP email
 
 ## Features
 
-- 🔐 **Secure Account Management**: Encrypted credential storage with AES-256 encryption
+- 🔐 **Secure Account Management**: Password storage in your operating system’s keychain
 - 🚀 **Connection Pooling**: Efficient IMAP connection management
 - 📧 **Comprehensive Email Operations**: Search, read, move, mark, delete, and bulk delete emails
 - ✉️ **Email Sending**: Send, reply, and forward emails via SMTP
@@ -110,56 +110,39 @@ This will:
 2. Open your browser to the setup wizard
 3. Guide you through adding email accounts with pre-configured settings
 
-### Overriding Credentials via Environment Variables
+### Password storage
 
-You can override the username and password of an already-configured account at
-runtime with environment variables — useful when you inject secrets from a
-password manager or CI system instead of storing them in `accounts.json`.
+The wizard saves passwords in **macOS Keychain**, **Windows Credential Manager**,
+or **Secret Service on Linux**. No password-manager account or environment
+variable is needed. Your operating system may ask you to unlock the keychain or
+allow access. Linux requires an unlocked Secret Service implementation (such as
+GNOME Keyring) and a D-Bus session accessible to the server. Headless sessions
+must provide these services too; there is no file or volatile-storage fallback.
 
-The variables are keyed by the account **name**, uppercased with every
-non-alphanumeric character replaced by `_`. For an account named `Work Gmail`
-(key `WORK_GMAIL`):
+`~/.imap-mcp/accounts.json` contains account settings, usernames and opaque
+keychain references, but no passwords for newly saved accounts. Passwords are
+loaded into process memory when needed to authenticate. The keychain protects
+storage at rest; it does not isolate secrets from a compromised server process.
 
-| Variable | Overrides |
-| --- | --- |
-| `IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_USERNAME` | IMAP username (`user`) |
-| `IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD` | IMAP password |
-| `IMAP_MCP_ACCOUNT_WORK_GMAIL_SMTP_USERNAME` | SMTP username (`smtp.user`) |
-| `IMAP_MCP_ACCOUNT_WORK_GMAIL_SMTP_PASSWORD` | SMTP password |
+#### Migrate existing accounts
 
-Notes:
-- Overrides apply **only to existing accounts**; if no account's normalized name
-  matches, the variable is ignored.
-- They are applied **in memory only** — nothing is written back to
-  `accounts.json`, and the values are used as-is (not re-encrypted).
-- Variables are **consumed at startup**: on server start they are captured into
-  an AES-256-encrypted in-memory cache and removed from `process.env`, so the
-  plaintext secret does not linger in the environment (where it could leak to
-  child processes or diagnostics). Set them before launching the server.
+Stop older server and wizard instances, then launch the updated setup wizard.
+Select **Protect saved passwords**. Every password is written and read back from
+the keychain before the configuration is replaced. If verification or saving
+fails, the previous configuration and encryption key remain available. Once all
+accounts have migrated, the old `.key` is removed. Editing a legacy account also
+migrates that account. Existing legacy accounts remain readable until migration.
 
-The setup wizard integrates with this: each credential field (IMAP password,
-IMAP username, SMTP username, SMTP password) has a **"Do not save to config; set
-later using an environment variable"** checkbox. When ticked, the value you enter
-is still used to test the connection, but it is not written to `accounts.json` —
-the wizard shows the exact variable name to export, and the account picks the
-credential up from that variable at runtime.
-- SMTP variables take effect only when the account already has an SMTP config.
-- Each variable takes effect independently; set only the ones you need.
+Legacy `IMAP_MCP_ACCOUNT_<NAME>_IMAP_USERNAME`, `_IMAP_PASSWORD`,
+`_SMTP_USERNAME` and `_SMTP_PASSWORD` overrides remain supported only for legacy
+accounts (`<NAME>` is the uppercase account name with non-alphanumeric characters
+replaced by `_`). Values are captured at startup and removed from `process.env`.
+Migration imports their effective values into the new storage; migrated accounts
+ignore these overrides. Remove obsolete variables from your launch configuration.
 
-**If the variable is missing**, the account still holds the empty placeholder the
-wizard wrote. Rather than dialing out with a blank credential — which providers
-answer with a generic authentication failure that looks exactly like a wrong
-password — the server refuses the connection and names what to set:
-
-```
-Account "Work Gmail" has IMAP credentials marked as environment-managed, but
-this variable was not set when the server started:
-IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD. Set it and restart the server, or
-store the credentials on the account via imap_update_account.
-```
-
-Because the variables are read once at startup, setting one in an already-running
-shell has no effect until the server is restarted.
+Back up the system keychain as well as account settings: copying `accounts.json`
+alone to another machine does not transfer passwords. Migration does not erase
+older backups of the legacy files. Third-party password managers are not integrated.
 
 ### Supported Email Providers
 
@@ -776,11 +759,10 @@ files. See [SECURITY.md](SECURITY.md) for the threat model and test limitations.
 
 ## Security
 
-- Credentials are encrypted using AES-256-CBC encryption
-- Encryption keys are stored separately in `~/.imap-mcp/.key`
+- Passwords are stored in the native operating system keychain; no file fallback
 - Account configurations are stored in `~/.imap-mcp/accounts.json`
-- The store directory, `.key`, and `accounts.json` are written owner-only
-  (`0700`/`0600`) so other local users cannot read the key or the credentials
+- The store directory and `accounts.json` are written owner-only
+  (`0700`/`0600`) to restrict access to account metadata
 - The web setup wizard's HTTP API never returns stored passwords to the browser
 - Attachment reads and writes are confined to `IMAP_DOWNLOAD_DIR` (default:
   `~/Downloads/imap-attachments`), including explicit `savePath` values. Child
@@ -790,10 +772,9 @@ files. See [SECURITY.md](SECURITY.md) for the threat model and test limitations.
   filenames receive a unique prefix on collision. This restriction also applies
   when the download tool is exposed in read-only mode (which protects mailboxes).
 - Account names, usernames and hosts are rendered as text in the setup wizard.
-- Partial SMTP updates preserve omitted credentials from the encrypted store;
-  environment overrides are not copied back to disk. Blank password inputs in the
-  wizard keep the current password; its environment-management flags explicitly
-  store an empty placeholder instead.
+- Partial SMTP updates preserve omitted credentials. Blank password inputs in the
+  wizard keep the current password. Saving verifies a fresh keychain entry before
+  atomically publishing its reference; superseded entries are then removed.
 - Account mutations reload the latest store under an exclusive cross-process lock
   and replace it atomically after flushing a temporary file. Invalid JSON blocks
   writes instead of being silently discarded. Concurrent writers must all use this

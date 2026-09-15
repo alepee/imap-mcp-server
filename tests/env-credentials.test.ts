@@ -85,22 +85,3 @@ describe('assertCredentialsResolved', () => {
     expect(() => assertCredentialsResolved(acc, 'smtp')).not.toThrow();
   });
 });
-
-// The wizard is a static asset and cannot import the server module, so the
-// normalization is written out twice. Assert the copies agree.
-describe('wizard/server env var name parity', () => {
-  it('public/js/app.js normalizes account names the same way', () => {
-    const appJs = readFileSync(join(process.cwd(), 'public/js/app.js'), 'utf-8');
-    const match = appJs.match(/function envVarName\(accountName, suffix\) \{([\s\S]*?)\n\}/);
-    expect(match, 'envVarName() not found in public/js/app.js').toBeTruthy();
-
-    // eslint-disable-next-line no-new-func
-    const wizardEnvVarName = new Function('accountName', 'suffix', match![1]) as
-      (accountName: string, suffix: string) => string;
-
-    for (const name of ['Work Gmail', 'mail.example.com', 'Büro-2', 'a1']) {
-      expect(wizardEnvVarName(name, '_IMAP_PASSWORD'))
-        .toBe(envVarName(name, '_IMAP_PASSWORD'));
-    }
-  });
-});

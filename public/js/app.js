@@ -48,38 +48,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
-    // Keep the env var names shown in the "Do not save" labels in sync with the
-    // account name.
-    document.getElementById('accountName').addEventListener('input', updateEnvVarNames);
-    updateEnvVarNames();
+    document.getElementById('migrateCredentials').addEventListener('click', migrateCredentials);
+    await refreshCredentialStorage();
 });
 
-// Maps each "do not save" field to its env var suffix and the label span that
-// displays the resulting variable name.
-const ENV_VAR_FIELDS = [
-    { varSpan: 'imapUsernameFromEnvVar', suffix: '_IMAP_USERNAME' },
-    { varSpan: 'imapPasswordFromEnvVar', suffix: '_IMAP_PASSWORD' },
-    { varSpan: 'smtpUsernameFromEnvVar', suffix: '_SMTP_USERNAME' },
-    { varSpan: 'smtpPasswordFromEnvVar', suffix: '_SMTP_PASSWORD' }
-];
-
-// Build the env var name for an account. This is served as a static asset, so
-// it cannot import the server module — keep it in sync with envVarName() in
-// src/utils/env-credentials.ts (uppercase, every non-alphanumeric character
-// replaced by "_"). Falls back to a <ACCOUNT_NAME> placeholder until an account
-// name is entered.
-function envVarName(accountName, suffix) {
-    const key = (accountName || '').toUpperCase().replace(/[^A-Z0-9]/g, '_') || '<ACCOUNT_NAME>';
-    return `IMAP_MCP_ACCOUNT_${key}${suffix}`;
+async function refreshCredentialStorage() {
+    try {
+        const response = await fetch('/api/credential-storage');
+        if (!response.ok) return;
+        const storage = await response.json();
+        document.getElementById('keychainNotice').textContent = `Passwords are saved in ${storage.name}. Your system may ask for permission.`;
+        document.getElementById('keychainMigration').classList.toggle('hidden', storage.legacyAccounts === 0);
+    } catch {
+        // The generic keychain notice remains useful if status is unavailable.
+    }
 }
 
-// Fill each label's variable-name span from the current account name.
-function updateEnvVarNames() {
-    const accountName = document.getElementById('accountName').value;
-    ENV_VAR_FIELDS.forEach(({ varSpan, suffix }) => {
-        const el = document.getElementById(varSpan);
-        if (el) el.textContent = envVarName(accountName, suffix);
-    });
+async function migrateCredentials() {
+    const button = document.getElementById('migrateCredentials');
+    const status = document.getElementById('keychainMigrationResult');
+    button.disabled = true;
+    status.textContent = 'Saving passwords in your system keychain… Allow access if your system asks.';
+    try {
+        const response = await fetch('/api/accounts/migrate-credentials', { method: 'POST' });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Could not save passwords.');
+        status.textContent = 'Your passwords are now protected by your system keychain.';
+        await viewAccounts();
+    } catch (error) {
+        status.textContent = error.message;
+    } finally {
+        button.disabled = false;
+    }
 }
 
 // Load providers from API
@@ -204,19 +204,31 @@ async function handleAccountUpdate(e) {
         tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
         provider: selectedProvider?.id || window.editingAccountProvider,
         saveToSent: document.getElementById('saveToSent').checked,
-        imapUsername: imapUsername || undefined,
-        imapUsernameFromEnv: document.getElementById('imapUsernameFromEnv').checked,
-        imapPasswordFromEnv: document.getElementById('imapPasswordFromEnv').checked
+        imapUsername: imapUsername || undefined
     };
 
-    // Only include password if it was changed (unless it is env-managed, which
-    // stores an empty placeholder explicitly).
-    if (!accountData.password && !accountData.imapPasswordFromEnv) {
+    // Blank inputs preserve the current saved password.
+    if (!accountData.password) {
         delete accountData.password;
     }
 
     goToStep(3);
+    addSmtpSettings(accountData, true);
     await updateAndTestAccount(window.editingAccountId, accountData);
+}
+
+function addSmtpSettings(accountData, editing) {
+    if (!document.getElementById('enableSmtp').checked) return;
+    accountData.smtp = {
+        host: document.getElementById('smtpHost').value,
+        port: parseInt(document.getElementById('smtpPort').value) || 587,
+        secure: document.getElementById('smtpSecure').checked
+    };
+    if (!document.getElementById('smtpSameAuth').checked) {
+        accountData.smtp.user = document.getElementById('smtpUser').value;
+        const password = document.getElementById('smtpPassword').value;
+        if (password || !editing) accountData.smtp.password = password;
+    }
 }
 
 // Handle account form submission
@@ -243,29 +255,10 @@ async function handleAccountSubmit(e) {
         provider: selectedProvider?.id || window.editingAccountProvider,
         saveToSent: document.getElementById('saveToSent').checked,
         imapUsername: imapUsername || undefined,
-        // "Do not save to config" flags — the typed value is still used for the
-        // connection test, it just isn't persisted to accounts.json.
-        imapUsernameFromEnv: document.getElementById('imapUsernameFromEnv').checked,
-        imapPasswordFromEnv: document.getElementById('imapPasswordFromEnv').checked
     };
 
-    // Add SMTP configuration if enabled
-    if (document.getElementById('enableSmtp').checked) {
-        accountData.smtp = {
-            host: document.getElementById('smtpHost').value,
-            port: parseInt(document.getElementById('smtpPort').value) || 587,
-            secure: document.getElementById('smtpSecure').checked
-        };
+    addSmtpSettings(accountData, false);
 
-        // Add SMTP auth if not using same credentials
-        if (!document.getElementById('smtpSameAuth').checked) {
-            accountData.smtp.user = document.getElementById('smtpUser').value;
-            accountData.smtp.password = document.getElementById('smtpPassword').value;
-            accountData.smtpUsernameFromEnv = document.getElementById('smtpUsernameFromEnv').checked;
-            accountData.smtpPasswordFromEnv = document.getElementById('smtpPasswordFromEnv').checked;
-        }
-    }
-    
     // Auto-detect provider if not selected
     if (!selectedProvider || selectedProvider.id === 'custom') {
         const domain = (accountData.email || '').split('@')[1]?.toLowerCase();
@@ -396,6 +389,7 @@ async function viewAccounts() {
     document.getElementById('accountsList').classList.remove('hidden');
     
     try {
+        await refreshCredentialStorage();
         const response = await fetch('/api/accounts');
         const accounts = await response.json();
         

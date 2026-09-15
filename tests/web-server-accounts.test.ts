@@ -11,7 +11,7 @@ const SECRET = 'imap-plaintext-secret';
 const SMTP_SECRET = 'smtp-plaintext-secret';
 
 const fakeAccountManager = {
-  getAllAccounts: () => [
+  listAccountMetadata: () => [
     {
       id: 'a1',
       name: 'Work',
@@ -23,7 +23,7 @@ const fakeAccountManager = {
       smtp: { host: 'smtp.example.com', port: 587, secure: false, password: SMTP_SECRET },
     },
   ],
-  getAccount: (id: string) =>
+  getAccountMetadata: (id: string) =>
     id === 'a1'
       ? {
           id: 'a1',

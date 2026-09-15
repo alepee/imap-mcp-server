@@ -9,11 +9,17 @@ control**.
 - **Local execution.** The server runs entirely on your own machine as a local
   MCP process (stdio). It is not a hosted service and does not require any
   account with this project.
-- **Credential storage.** IMAP/SMTP credentials are stored encrypted with
-  **AES-256-CBC** in `~/.imap-mcp/accounts.json`. The encryption key is generated
-  locally and kept at `~/.imap-mcp/.key`. The store directory and both files are
-  written owner-only (`0700`/`0600`) so other local users cannot read them;
-  anyone who can read both files can read your credentials.
+- **Credential storage.** Passwords are stored in macOS Keychain, Windows
+  Credential Manager or Linux Secret Service, with no file fallback. Usernames,
+  server settings and opaque references remain in owner-only `accounts.json`.
+  Keychain access follows the OS user's permissions and unlock state; passwords
+  are necessarily present in server memory during authentication. This does not
+  protect against a compromised server or every process running as the same user.
+  Legacy AES-256-CBC files remain readable during migration. The wizard verifies
+  all migrated secrets before replacing configuration and removing the old `.key`.
+  Failed writes preserve the previous configuration; obsolete-entry cleanup can
+  leave an orphan if the keychain becomes unavailable after commit. Old backups
+  are not erased by migration. See README for migration and Linux prerequisites.
 - **No telemetry.** The server collects no analytics, usage data, or crash
   reports.
 - **No third-party data sharing.** The only outbound network connections are to

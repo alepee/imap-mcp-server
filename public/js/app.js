@@ -1,6 +1,33 @@
 // Email providers data
 let providers = [];
 let selectedProvider = null;
+// Whether the user actually clicked a provider tile, as opposed to the wizard
+// falling back to one. See resolveTlsSetting.
+let providerPickedByUser = false;
+
+/**
+ * Decide an account's IMAP TLS mode for a save.
+ *
+ * The wizard has no TLS control of its own — it infers the mode from the
+ * selected provider. Editing an account selects no tile, so the code fell back
+ * to the 'custom' provider, whose imapSecurity is 'SSL', and every save
+ * rewrote a STARTTLS account (local bridges on 1143, plain servers on 143) to
+ * implicit TLS. Renaming an account was enough to break it, and the connection
+ * then failed with "wrong version number" — a protocol error that reads as a
+ * certificate problem and sends you looking in the wrong place.
+ *
+ * So: keep what is stored unless the user actually picked a provider. Adding
+ * an account has nothing stored and is unaffected.
+ *
+ * Mirrored by tests/wizard-tls-setting.test.ts, which runs this exact function
+ * body — keep it self-contained.
+ */
+function resolveTlsSetting(provider, pickedByUser, storedTls) {
+    if (!pickedByUser && typeof storedTls === 'boolean') {
+        return storedTls;
+    }
+    return provider?.imapSecurity !== 'STARTTLS';
+}
 let currentStep = 1;
 
 // Initialize
@@ -89,6 +116,7 @@ function renderProviders() {
 // Select provider
 function selectProvider(providerId) {
     selectedProvider = providers.find(p => p.id === providerId);
+    providerPickedByUser = true;
     goToStep(2);
     
     // Pre-fill advanced settings
@@ -173,7 +201,7 @@ async function handleAccountUpdate(e) {
         password: document.getElementById('password').value,
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
-        tls: selectedProvider?.imapSecurity !== 'STARTTLS',
+        tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
         saveToSent: document.getElementById('saveToSent').checked,
         imapUsername: imapUsername || undefined,
         imapUsernameFromEnv: document.getElementById('imapUsernameFromEnv').checked,
@@ -210,7 +238,7 @@ async function handleAccountSubmit(e) {
         password: document.getElementById('password').value,
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
-        tls: selectedProvider?.imapSecurity !== 'STARTTLS',
+        tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
         saveToSent: document.getElementById('saveToSent').checked,
         imapUsername: imapUsername || undefined,
         // "Do not save to config" flags — the typed value is still used for the
@@ -424,8 +452,11 @@ async function editAccount(accountId) {
         
         const account = result.account;
         
-        // Store editing account ID
+        // Store editing account ID, and the stored TLS mode so a save cannot
+        // silently rewrite it (see resolveTlsSetting).
         window.editingAccountId = accountId;
+        window.editingAccountTls = account.tls;
+        providerPickedByUser = false;
         
         // Clear any stale validation messages
         document.getElementById('inlineTestResult').classList.add('hidden');
@@ -532,7 +563,7 @@ async function testCurrentSettings() {
         password: document.getElementById('password').value,
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
-        tls: selectedProvider?.imapSecurity !== 'STARTTLS',
+        tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
         imapUsername: imapUsername || undefined
     };
     
@@ -633,8 +664,10 @@ function showProviderSelection() {
     document.getElementById('accountForm').reset();
     document.getElementById('password').placeholder = '';
     window.editingAccountId = null;
+    window.editingAccountTls = undefined;
     document.getElementById('accountForm').onsubmit = handleAccountSubmit;
     selectedProvider = null;
+    providerPickedByUser = false;
     
     // Reset form title
     const formTitle = document.querySelector('#credentialsForm h2');
@@ -667,6 +700,8 @@ function addAnotherAccount() {
     // Reset form
     document.getElementById('accountForm').reset();
     selectedProvider = null;
+    providerPickedByUser = false;
+    window.editingAccountTls = undefined;
     goToStep(1);
 }
 

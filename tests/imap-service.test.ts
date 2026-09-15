@@ -190,7 +190,8 @@ describe('ImapService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('[ALERT] IMAP access disabled');
-      expect(result.error).toContain('Hint: GMX requires IMAP access to be manually enabled.');
+      // Name comes from the shared catalogue's displayName now, not a private table.
+      expect(result.error).toContain('Hint: GMX Mail requires IMAP access to be manually enabled.');
       expect(result.error).toContain('Settings → Email → POP3 & IMAP → Enable IMAP access');
     });
   });

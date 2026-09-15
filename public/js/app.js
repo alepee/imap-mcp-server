@@ -10,7 +10,7 @@ let providerPickedByUser = false;
  *
  * The wizard has no TLS control of its own — it infers the mode from the
  * selected provider. Editing an account selects no tile, so the code fell back
- * to the 'custom' provider, whose imapSecurity is 'SSL', and every save
+ * to the 'custom' provider, which carries no imap block, and every save
  * rewrote a STARTTLS account (local bridges on 1143, plain servers on 143) to
  * implicit TLS. Renaming an account was enough to break it, and the connection
  * then failed with "wrong version number" — a protocol error that reads as a
@@ -26,7 +26,7 @@ function resolveTlsSetting(provider, pickedByUser, storedTls) {
     if (!pickedByUser && typeof storedTls === 'boolean') {
         return storedTls;
     }
-    return provider?.imapSecurity !== 'STARTTLS';
+    return provider?.imap?.security !== 'starttls';
 }
 let currentStep = 1;
 
@@ -96,13 +96,13 @@ async function loadProviders() {
 function renderProviders() {
     const grid = document.getElementById('providerGrid');
     grid.innerHTML = providers.map(provider => `
-        <div class="provider-card bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg border-l-4" onclick="selectProvider('${provider.id}')" style="border-left-color: ${provider.color}">
+        <div class="provider-card bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg border-l-4" onclick="selectProvider('${provider.id}')" style="border-left-color: ${provider.ui?.color || '#6B7280'}">
             <div class="text-center">
-                <div class="h-12 w-12 mx-auto mb-2 rounded-lg flex items-center justify-center p-2" style="background-color: ${provider.color}15;">
-                    <img src="${provider.iconUrl}" alt="${provider.name}" class="w-full h-full object-contain" style="filter: brightness(0) saturate(100%) invert(0)" 
+                <div class="h-12 w-12 mx-auto mb-2 rounded-lg flex items-center justify-center p-2" style="background-color: ${(provider.ui?.color || '#6B7280')}15;">
+                    <img src="${provider.ui?.iconUrl || ''}" alt="${provider.displayName}" class="w-full h-full object-contain" style="filter: brightness(0) saturate(100%) invert(0)" 
                          onload="this.style.filter = 'none'" 
                          onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                    <div class="w-full h-full items-center justify-center text-sm font-bold text-white rounded" style="display:none; background-color: ${provider.color};">
+                    <div class="w-full h-full items-center justify-center text-sm font-bold text-white rounded" style="display:none; background-color: ${provider.ui?.color || '#6B7280'};">
                         ${provider.name.charAt(0)}
                     </div>
                 </div>
@@ -121,8 +121,8 @@ function selectProvider(providerId) {
     
     // Pre-fill advanced settings
     if (selectedProvider) {
-        document.getElementById('imapHost').value = selectedProvider.imapHost;
-        document.getElementById('imapPort').value = selectedProvider.imapPort;
+        document.getElementById('imapHost').value = selectedProvider.imap?.host || '';
+        document.getElementById('imapPort').value = selectedProvider.imap?.port || 993;
         
         // Reset SMTP settings
         document.getElementById('enableSmtp').checked = false;
@@ -133,9 +133,9 @@ function selectProvider(providerId) {
         // Update password help text
         const passwordHelp = document.getElementById('passwordHelp');
         if (selectedProvider.requiresAppPassword) {
-            passwordHelp.innerHTML = `<span class="mr-1">ℹ️</span>${selectedProvider.notes || 'This provider requires an app-specific password.'}`;
-            if (selectedProvider.helpUrl) {
-                passwordHelp.innerHTML += ` <a href="${selectedProvider.helpUrl}" target="_blank" class="text-blue-600 hover:underline">Learn more</a>`;
+            passwordHelp.innerHTML = `<span class="mr-1">ℹ️</span>${selectedProvider.auth?.notes || 'This provider requires an app-specific password.'}`;
+            if (selectedProvider.auth?.helpUrl) {
+                passwordHelp.innerHTML += ` <a href="${selectedProvider.auth.helpUrl}" target="_blank" class="text-blue-600 hover:underline">Learn more</a>`;
             }
         } else {
             passwordHelp.textContent = '';
@@ -202,6 +202,7 @@ async function handleAccountUpdate(e) {
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
         tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
+        provider: selectedProvider?.id || window.editingAccountProvider,
         saveToSent: document.getElementById('saveToSent').checked,
         imapUsername: imapUsername || undefined,
         imapUsernameFromEnv: document.getElementById('imapUsernameFromEnv').checked,
@@ -239,6 +240,7 @@ async function handleAccountSubmit(e) {
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
         tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
+        provider: selectedProvider?.id || window.editingAccountProvider,
         saveToSent: document.getElementById('saveToSent').checked,
         imapUsername: imapUsername || undefined,
         // "Do not save to config" flags — the typed value is still used for the
@@ -271,9 +273,10 @@ async function handleAccountSubmit(e) {
             ? providers.find(p => p.domains.some(d => domain.endsWith(d)))
             : undefined;
         if (detectedProvider) {
-            accountData.host = detectedProvider.imapHost;
-            accountData.port = detectedProvider.imapPort;
-            accountData.tls = detectedProvider.imapSecurity !== 'STARTTLS';
+            accountData.host = detectedProvider.imap?.host || accountData.host;
+            accountData.port = detectedProvider.imap?.port || accountData.port;
+            accountData.tls = detectedProvider.imap?.security !== 'starttls';
+            accountData.provider = detectedProvider.id;
         }
     }
     
@@ -456,6 +459,7 @@ async function editAccount(accountId) {
         // silently rewrite it (see resolveTlsSetting).
         window.editingAccountId = accountId;
         window.editingAccountTls = account.tls;
+        window.editingAccountProvider = account.provider;
         providerPickedByUser = false;
         
         // Clear any stale validation messages
@@ -497,13 +501,12 @@ async function editAccount(accountId) {
             document.getElementById('smtpSettings').classList.add('hidden');
         }
         
-        // Try to detect provider (use email; fall back to user, which may not contain a domain)
-        const detectEmail = account.email || account.user || '';
-        const domain = detectEmail.split('@')[1]?.toLowerCase();
-        const detectedProvider = domain
-            ? providers.find(p => p.domains.some(d => domain.endsWith(d)))
-            : undefined;
-        selectedProvider = detectedProvider || providers.find(p => p.id === 'custom');
+        // The account records the provider it was created from, so there is
+        // nothing to infer. Domain guessing is what rewrote STARTTLS accounts
+        // to implicit TLS on a rename (#7): it could not match a custom domain,
+        // fell back to 'custom', and that fallback decided the TLS mode.
+        selectedProvider = providers.find(p => p.id === account.provider)
+            || providers.find(p => p.id === 'custom');
         
         // Show credentials form
         goToStep(2);
@@ -564,6 +567,7 @@ async function testCurrentSettings() {
         host: document.getElementById('imapHost').value,
         port: parseInt(document.getElementById('imapPort').value),
         tls: resolveTlsSetting(selectedProvider, providerPickedByUser, window.editingAccountTls),
+        provider: selectedProvider?.id || window.editingAccountProvider,
         imapUsername: imapUsername || undefined
     };
     
@@ -637,10 +641,11 @@ function toggleSmtpSettings() {
             
             if (!smtpHost.value) {
                 // Convert IMAP host to SMTP host
-                smtpHost.value = selectedProvider.imapHost.replace('imap.', 'smtp.').replace('imap-', 'smtp-');
+                smtpHost.value = selectedProvider.smtp?.host
+                    || (selectedProvider.imap?.host || '').replace('imap.', 'smtp.').replace('imap-', 'smtp-');
             }
             if (!smtpPort.value) {
-                smtpPort.value = '587'; // Default SMTP port
+                smtpPort.value = String(selectedProvider.smtp?.port || 587);
             }
         }
     } else {
@@ -665,6 +670,7 @@ function showProviderSelection() {
     document.getElementById('password').placeholder = '';
     window.editingAccountId = null;
     window.editingAccountTls = undefined;
+    window.editingAccountProvider = undefined;
     document.getElementById('accountForm').onsubmit = handleAccountSubmit;
     selectedProvider = null;
     providerPickedByUser = false;
@@ -702,6 +708,7 @@ function addAnotherAccount() {
     selectedProvider = null;
     providerPickedByUser = false;
     window.editingAccountTls = undefined;
+    window.editingAccountProvider = undefined;
     goToStep(1);
 }
 

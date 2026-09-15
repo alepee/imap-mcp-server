@@ -5,38 +5,7 @@ import type { AccountManager } from './account-manager.js';
 import { htmlToMarkdown, normalizeWhitespace } from './html-to-markdown.js';
 import { assertCredentialsResolved } from '../utils/env-credentials.js';
 import { resolveTlsCa } from '../utils/tls-ca.js';
-
-/**
- * Providers that require IMAP access to be manually enabled in account settings.
- * Each entry maps a host pattern to a human-readable hint.
- */
-const PROVIDERS_REQUIRING_IMAP_ENABLE: Array<{ pattern: RegExp; name: string; settingsPath: string }> = [
-  {
-    pattern: /gmx\.(net|de|at|ch|com)/i,
-    name: 'GMX',
-    settingsPath: 'Settings → Email → POP3 & IMAP → Enable IMAP access',
-  },
-  {
-    pattern: /web\.de/i,
-    name: 'WEB.DE',
-    settingsPath: 'Settings → Email → POP3 & IMAP → Enable IMAP access',
-  },
-  {
-    pattern: /zoho\.(com|eu)/i,
-    name: 'Zoho Mail',
-    settingsPath: 'Settings → Mail Accounts → IMAP Access → Enable',
-  },
-  {
-    pattern: /yahoo\.(com|de|co\.uk|fr|es|it)/i,
-    name: 'Yahoo Mail',
-    settingsPath: 'Account Security settings → Generate app password',
-  },
-  {
-    pattern: /gmail\.com|googlemail\.com/i,
-    name: 'Gmail',
-    settingsPath: 'Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP',
-  },
-];
+import { getProviderById, getProviders } from '../providers/catalogue.js';
 
 /**
  * Error message patterns that indicate IMAP access is disabled at the provider.
@@ -57,7 +26,7 @@ const IMAP_DISABLED_PATTERNS = [
  * Enriches a connection error with a provider-specific hint when IMAP access
  * may need to be manually enabled in the account settings.
  */
-function enrichConnectionError(error: unknown, host: string): string {
+function enrichConnectionError(error: unknown, host: string, provider?: string): string {
   const originalMessage = error instanceof Error ? error.message : 'Connection failed';
 
   // Check if the error message already indicates IMAP is disabled
@@ -67,13 +36,18 @@ function enrichConnectionError(error: unknown, host: string): string {
     return originalMessage;
   }
 
-  const matchedProvider = PROVIDERS_REQUIRING_IMAP_ENABLE.find(p => p.pattern.test(host));
+  // Hint text lives in the shared catalogue, resolved from the account's
+  // provider when it has one and otherwise from an exact host match. It used to
+  // be a third private table in this file, keyed by regex on the host.
+  const matched =
+    getProviderById(provider) ??
+    getProviders().find(p => p.imap?.host === host);
 
-  if (matchedProvider) {
+  if (matched?.hints?.authFailure) {
     return (
       `${originalMessage}\n\n` +
-      `Hint: ${matchedProvider.name} requires IMAP access to be manually enabled. ` +
-      `Go to: ${matchedProvider.settingsPath}`
+      `Hint: ${matched.displayName} requires IMAP access to be manually enabled. ` +
+      `Go to: ${matched.hints.authFailure}`
     );
   }
 
@@ -226,7 +200,7 @@ export class ImapService {
     try {
       await client.connect();
     } catch (err) {
-      throw new Error(enrichConnectionError(err, account.host));
+      throw new Error(enrichConnectionError(err, account.host, account.provider));
     }
 
     this.connections.set(account.id, {

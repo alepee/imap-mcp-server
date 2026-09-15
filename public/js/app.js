@@ -103,7 +103,7 @@ function renderProviders() {
                          onload="this.style.filter = 'none'" 
                          onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                     <div class="w-full h-full items-center justify-center text-sm font-bold text-white rounded" style="display:none; background-color: ${provider.ui?.color || '#6B7280'};">
-                        ${provider.name.charAt(0)}
+                        ${provider.displayName.charAt(0)}
                     </div>
                 </div>
                 <h3 class="font-medium text-gray-900">${provider.displayName}</h3>

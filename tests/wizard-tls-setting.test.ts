@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { emailProviders } from '../src/providers/email-providers.js';
+import { getProviders } from '../src/providers/catalogue.js';
 
 // public/js/app.js is a static asset and cannot be imported, so lift the
 // function body out and run it — the same approach as env-credentials.test.ts.
@@ -19,11 +19,11 @@ function loadResolveTlsSetting() {
 const resolveTlsSetting: (provider: any, pickedByUser: boolean, storedTls?: boolean) => boolean =
   (...args) => loadResolveTlsSetting()(...args);
 
-const provider = (id: string) => emailProviders.find(p => p.id === id)!;
+const provider = (id: string) => getProviders().find(p => p.id === id)!;
 
 describe('wizard — TLS mode on save', () => {
   // The regression: editing a STARTTLS account selects no provider tile, the
-  // wizard fell back to 'custom' (imapSecurity 'SSL'), and the save rewrote the
+  // wizard fell back to 'custom' (no imap block), and the save rewrote the
   // account to implicit TLS. Renaming a Proton Bridge account was enough to
   // break it, with "wrong version number" as the misleading symptom.
   it('keeps a stored STARTTLS account on edit when no provider was picked', () => {
@@ -52,13 +52,13 @@ describe('wizard — TLS mode on save', () => {
   // the original code: it is the inference, inlined into the save payloads,
   // that silently rewrote the account.
   it('never infers the TLS mode inline in a save payload', () => {
-    const inlined = appJs.match(/tls:\s*selectedProvider\?\.imapSecurity/g) ?? [];
+    const inlined = appJs.match(/tls:\s*selectedProvider\?\.(imapSecurity|imap\?\.security)/g) ?? [];
     expect(inlined, 'save payloads must go through resolveTlsSetting').toEqual([]);
   });
 
   it('agrees with the provider catalogue for every entry', () => {
-    for (const p of emailProviders) {
-      expect(resolveTlsSetting(p, true, undefined)).toBe(p.imapSecurity !== 'STARTTLS');
+    for (const p of getProviders()) {
+      expect(resolveTlsSetting(p, true, undefined)).toBe(p.imap?.security !== 'starttls');
     }
   });
 });

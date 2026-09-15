@@ -1,0 +1,403 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "gmail",
+      "displayName": "Google Mail",
+      "domains": [
+        "gmail.com",
+        "googlemail.com"
+      ],
+      "imap": {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 465,
+        "security": "implicit"
+      },
+      "auth": {
+        "appPassword": true,
+        "oauth2": true,
+        "helpUrl": "https://support.google.com/mail/answer/7126229",
+        "notes": "Requires app-specific password or OAuth2. Enable \"Less secure app access\" or use App Password with 2FA."
+      },
+      "hints": {
+        "authFailure": "Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP"
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/gmail.svg",
+        "color": "#EA4335"
+      }
+    },
+    {
+      "id": "outlook",
+      "displayName": "Microsoft Outlook",
+      "domains": [
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com"
+      ],
+      "imap": {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp-mail.outlook.com",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "oauth2": true,
+        "helpUrl": "https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings-8361e398-8af4-4e97-b147-6c6c4ac95353"
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/microsoftoutlook.svg",
+        "color": "#0078D4"
+      }
+    },
+    {
+      "id": "yahoo",
+      "displayName": "Yahoo Mail",
+      "domains": [
+        "yahoo.com",
+        "yahoo.de",
+        "yahoo.co.uk",
+        "ymail.com"
+      ],
+      "imap": {
+        "host": "imap.mail.yahoo.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.mail.yahoo.com",
+        "port": 465,
+        "security": "implicit"
+      },
+      "auth": {
+        "appPassword": true,
+        "helpUrl": "https://help.yahoo.com/kb/SLN4075.html",
+        "notes": "Requires app-specific password. Generate one in Yahoo Account Security settings."
+      },
+      "hints": {
+        "authFailure": "Account Security settings → Generate app password"
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/yahoo.svg",
+        "color": "#6001D2"
+      }
+    },
+    {
+      "id": "icloud",
+      "displayName": "Apple iCloud Mail",
+      "domains": [
+        "icloud.com",
+        "me.com",
+        "mac.com"
+      ],
+      "imap": {
+        "host": "imap.mail.me.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.mail.me.com",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "appPassword": true,
+        "helpUrl": "https://support.apple.com/en-us/HT202304",
+        "notes": "Requires app-specific password if 2FA is enabled."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/icloud.svg",
+        "color": "#007AFF"
+      }
+    },
+    {
+      "id": "gmx",
+      "displayName": "GMX Mail",
+      "domains": [
+        "gmx.net",
+        "gmx.de",
+        "gmx.at",
+        "gmx.ch",
+        "gmx.com"
+      ],
+      "imap": {
+        "host": "imap.gmx.net",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "mail.gmx.net",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://support.gmx.com/pop-imap/imap/index.html"
+      },
+      "hints": {
+        "authFailure": "Settings → Email → POP3 & IMAP → Enable IMAP access"
+      },
+      "ui": {
+        "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/4/4e/GMX_logo.svg",
+        "color": "#FF6900"
+      }
+    },
+    {
+      "id": "webde",
+      "displayName": "WEB.DE Mail",
+      "domains": [
+        "web.de"
+      ],
+      "imap": {
+        "host": "imap.web.de",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.web.de",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://hilfe.web.de/pop-imap/imap/index.html"
+      },
+      "hints": {
+        "authFailure": "Settings → Email → POP3 & IMAP → Enable IMAP access"
+      },
+      "ui": {
+        "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/f/f2/Web.de_logo.svg",
+        "color": "#FFCC00"
+      }
+    },
+    {
+      "id": "ionos",
+      "displayName": "IONOS Mail (1&1)",
+      "domains": [
+        "ionos.de",
+        "1und1.de",
+        "1and1.com"
+      ],
+      "imap": {
+        "host": "imap.ionos.de",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.ionos.de",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://www.ionos.de/hilfe/e-mail/e-mail-konto-in-e-mail-programm-einrichten/imap-posteingangsserver-und-postausgangsserver/",
+        "notes": "Use your full email address as username."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/ionos.svg",
+        "color": "#003D8F"
+      }
+    },
+    {
+      "id": "mailbox",
+      "displayName": "mailbox.org",
+      "domains": [
+        "mailbox.org"
+      ],
+      "imap": {
+        "host": "imap.mailbox.org",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.mailbox.org",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://kb.mailbox.org/en/private/e-mail-article/manual-configuration-of-e-mail-programs"
+      },
+      "ui": {
+        "iconUrl": "https://mailbox.org/favicon.ico",
+        "color": "#5CB85C"
+      }
+    },
+    {
+      "id": "posteo",
+      "displayName": "Posteo",
+      "domains": [
+        "posteo.de",
+        "posteo.net"
+      ],
+      "imap": {
+        "host": "posteo.de",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "posteo.de",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://posteo.de/en/help/how-do-i-set-up-posteo-in-an-email-client-pop3-imap-and-smtp"
+      },
+      "ui": {
+        "iconUrl": "https://posteo.de/favicon.ico",
+        "color": "#8CC63F"
+      }
+    },
+    {
+      "id": "aol",
+      "displayName": "AOL Mail",
+      "domains": [
+        "aol.com",
+        "aol.de"
+      ],
+      "imap": {
+        "host": "imap.aol.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.aol.com",
+        "port": 465,
+        "security": "implicit"
+      },
+      "auth": {
+        "appPassword": true,
+        "helpUrl": "https://help.aol.com/articles/how-do-i-use-other-email-applications-to-send-and-receive-my-aol-mail"
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/aol.svg",
+        "color": "#FF0B00"
+      }
+    },
+    {
+      "id": "office365",
+      "displayName": "Microsoft 365",
+      "domains": [],
+      "imap": {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.office365.com",
+        "port": 587,
+        "security": "starttls"
+      },
+      "auth": {
+        "oauth2": true,
+        "helpUrl": "https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings-8361e398-8af4-4e97-b147-6c6c4ac95353",
+        "notes": "For business/organization accounts. Use full email as username."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/microsoft365.svg",
+        "color": "#0078D4"
+      }
+    },
+    {
+      "id": "zoho",
+      "displayName": "Zoho Mail",
+      "domains": [
+        "zoho.com",
+        "zohomail.com"
+      ],
+      "imap": {
+        "host": "imap.zoho.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.zoho.com",
+        "port": 465,
+        "security": "implicit"
+      },
+      "auth": {
+        "helpUrl": "https://www.zoho.com/mail/help/imap-access.html",
+        "notes": "Enable IMAP access in Zoho Mail settings first."
+      },
+      "hints": {
+        "authFailure": "Settings → Mail Accounts → IMAP Access → Enable"
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/zoho.svg",
+        "color": "#C83C2B"
+      }
+    },
+    {
+      "id": "protonmail",
+      "displayName": "Proton Mail",
+      "domains": [
+        "protonmail.com",
+        "proton.me",
+        "pm.me"
+      ],
+      "imap": {
+        "host": "127.0.0.1",
+        "port": 1143,
+        "security": "starttls"
+      },
+      "smtp": {
+        "host": "127.0.0.1",
+        "port": 1025,
+        "security": "starttls"
+      },
+      "auth": {
+        "helpUrl": "https://proton.me/support/protonmail-bridge-install",
+        "notes": "Requires ProtonMail Bridge application running locally. Paid accounts only."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/protonmail.svg",
+        "color": "#6D4AFF"
+      }
+    },
+    {
+      "id": "fastmail",
+      "displayName": "Fastmail",
+      "domains": [
+        "fastmail.com",
+        "fastmail.fm"
+      ],
+      "imap": {
+        "host": "imap.fastmail.com",
+        "port": 993,
+        "security": "implicit"
+      },
+      "smtp": {
+        "host": "smtp.fastmail.com",
+        "port": 465,
+        "security": "implicit"
+      },
+      "auth": {
+        "appPassword": true,
+        "helpUrl": "https://www.fastmail.help/hc/en-us/articles/1500000278342",
+        "notes": "Requires app-specific password. Create one in Settings > Privacy & Security."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/fastmail.svg",
+        "color": "#2E5CFF"
+      }
+    },
+    {
+      "id": "custom",
+      "displayName": "Custom/Other Provider",
+      "auth": {
+        "notes": "Enter your email provider's IMAP settings manually."
+      },
+      "ui": {
+        "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@v10/icons/mail.svg",
+        "color": "#6B7280"
+      },
+      "manual": true
+    }
+  ]
+}

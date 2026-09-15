@@ -21,6 +21,12 @@ export interface ImapAccount {
    * and draft. Merged with any per-call `bcc` (call-site values win for
    * ordering; duplicates are removed case-insensitively). */
   defaultBcc?: string | string[];
+  /** Which catalogue provider this account was created from, e.g. "gmail".
+   * Provenance and UI context only: the record below carries the complete
+   * connection settings, so nothing is resolved from the catalogue at
+   * connection time and a catalogue change can never alter a working account.
+   * Absent on accounts created before the catalogue existed. */
+  provider?: string;
   /** Extra CA certificate to trust for this account's IMAP TLS, as a path to a
    * PEM file (a leading `~` is expanded) or the PEM text itself. Needed for a
    * local bridge that serves a self-signed certificate, such as Proton Mail

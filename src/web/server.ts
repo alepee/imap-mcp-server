@@ -8,7 +8,7 @@ import type { Server } from 'http';
 import open from 'open';
 import { AccountManager } from '../services/account-manager.js';
 import { ImapService } from '../services/imap-service.js';
-import { emailProviders, getProviderByEmail } from '../providers/email-providers.js';
+import { getProviders, getProviderByEmail, getProviderById } from '../providers/catalogue.js';
 import { ImapAccount } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -126,7 +126,7 @@ export class WebUIServer {
   private setupRoutes(): void {
     // Get all providers
     this.app.get('/api/providers', (req, res) => {
-      res.json(emailProviders);
+      res.json(getProviders());
     });
 
     // Get all accounts
@@ -144,7 +144,7 @@ export class WebUIServer {
     this.app.post('/api/accounts', async (req, res) => {
       try {
         const {
-          name, email, password, host, port, tls, smtp, imapUsername, sentFolder, defaultBcc, tlsCa,
+          name, email, password, host, port, tls, smtp, imapUsername, sentFolder, defaultBcc, tlsCa, provider,
           imapUsernameFromEnv, imapPasswordFromEnv,
           smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
@@ -154,13 +154,14 @@ export class WebUIServer {
         let imapPort = port;
         let useTls = tls;
 
-        if (!host && email) {
-          const provider = getProviderByEmail(email);
-          if (provider) {
-            imapHost = provider.imapHost;
-            imapPort = provider.imapPort;
-            useTls = provider.imapSecurity !== 'STARTTLS';
-          }
+        // An explicitly picked provider wins. The domain lookup is only a
+        // fallback for a caller that supplied neither host nor provider, and it
+        // never decides the TLS mode of an existing account (#7).
+        const picked = getProviderById(provider) ?? (!host && email ? getProviderByEmail(email) : undefined);
+        if (!host && picked?.imap) {
+          imapHost = picked.imap.host;
+          imapPort = picked.imap.port;
+          useTls = picked.imap.security !== 'starttls';
         }
 
         // Credentials flagged as env-managed are stored as empty placeholders;
@@ -185,6 +186,7 @@ export class WebUIServer {
             ? { defaultBcc }
             : {}),
           ...(typeof tlsCa === 'string' && tlsCa ? { tlsCa } : {}),
+          ...(picked ? { provider: picked.id } : {}),
         });
 
         // addAccount returns the plaintext password back; never echo it.
@@ -253,7 +255,7 @@ export class WebUIServer {
     this.app.put('/api/accounts/:id', async (req, res) => {
       try {
         const {
-          name, email, password, host, port, tls, smtp, saveToSent, imapUsername, sentFolder, defaultBcc, tlsCa,
+          name, email, password, host, port, tls, smtp, saveToSent, imapUsername, sentFolder, defaultBcc, tlsCa, provider,
           imapUsernameFromEnv, imapPasswordFromEnv,
           smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
@@ -300,6 +302,7 @@ export class WebUIServer {
 
         // Empty string clears the CA and restores the default trust store.
         if (typeof tlsCa === 'string') updates.tlsCa = tlsCa === '' ? undefined : tlsCa;
+        if (typeof provider === 'string' && provider) updates.provider = provider;
 
         // updateAccount returns a DECRYPTED account (plaintext IMAP + SMTP
         // passwords). A no-op update (e.g. a rename with no password supplied)

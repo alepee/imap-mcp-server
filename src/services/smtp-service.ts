@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { ImapAccount, EmailComposer, SmtpConfig } from '../types/index.js';
 import { parseSerializedArray } from '../utils/array-input.js';
+import { getProviderById, getProviders } from '../providers/catalogue.js';
 import { assertCredentialsResolved } from '../utils/env-credentials.js';
 
 export class SmtpService {
@@ -48,58 +49,31 @@ export class SmtpService {
     return { secure, requireTLS: !secure };
   }
 
+  /**
+   * SMTP settings for an account that carries none of its own.
+   *
+   * Resolution order: the account's provider, then an exact match of its IMAP
+   * host against the catalogue, then the `imap.` -> `smtp.` rewrite. The first
+   * two used to be a private table in this file that disagreed with the wizard's
+   * catalogue for five providers (Gmail, Yahoo, AOL and Fastmail on the port,
+   * Outlook on the host itself). There is now one source.
+   */
   private getDefaultSmtpConfig(account: ImapAccount): SmtpConfig {
-    // Common SMTP configurations based on IMAP settings
-    const commonProviders: { [key: string]: SmtpConfig } = {
-      'imap.gmail.com': {
-        host: 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-      },
-      'outlook.office365.com': {
-        host: 'smtp.office365.com',
-        port: 587,
-        secure: false,
-      },
-      'imap-mail.outlook.com': {
-        host: 'smtp-mail.outlook.com',
-        port: 587,
-        secure: false,
-      },
-      'imap.mail.yahoo.com': {
-        host: 'smtp.mail.yahoo.com',
-        port: 587,
-        secure: false,
-      },
-      'imap.aol.com': {
-        host: 'smtp.aol.com',
-        port: 587,
-        secure: false,
-      },
-      'imap.fastmail.com': {
-        host: 'smtp.fastmail.com',
-        port: 587,
-        secure: false,
-      },
-      'imap.zoho.com': {
-        host: 'smtp.zoho.com',
-        port: 465,
-        secure: true,
-      },
-      'imappro.zoho.com': {
-        host: 'smtppro.zoho.com',
-        port: 465,
-        secure: true,
-      },
-    };
+    const fromCatalogue =
+      getProviderById(account.provider)?.smtp ??
+      getProviders().find(p => p.imap?.host === account.host)?.smtp;
 
-    const providerConfig = commonProviders[account.host];
-    if (providerConfig) {
-      return providerConfig;
+    if (fromCatalogue) {
+      return {
+        host: fromCatalogue.host,
+        port: fromCatalogue.port,
+        secure: fromCatalogue.security === 'implicit',
+      };
     }
 
-    // Default: submission port 587 with STARTTLS (RFC 8314 recommended).
-    // Guess SMTP host: rewrite imap.* to smtp.* if present, otherwise reuse the IMAP host.
+    // Unknown host: guess the SMTP name, and default to submission with a
+    // mandatory STARTTLS upgrade (resolveTlsMode turns port 587 into
+    // requireTLS).
     const smtpHost = account.host.startsWith('imap.') || account.host.startsWith('imap-')
       ? account.host.replace(/^imap[.-]/, (m) => m === 'imap.' ? 'smtp.' : 'smtp-')
       : account.host;

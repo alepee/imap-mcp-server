@@ -337,7 +337,47 @@ Once configured, the IMAP MCP server provides the following tools in Claude:
   - tlsCa: Extra CA certificate to trust for this account's IMAP TLS — a path
       to a PEM file (a leading `~` is expanded) or the PEM text itself. See
       "Local bridges" below
+  - provider: Catalogue provider id, e.g. `gmail`, `protonmail`. Fills in any
+      host/port/security you leave out, and is recorded on the account
   ```
+
+#### Provider catalogue
+
+Providers live in one place, `src/providers/providers.json`, used by the setup
+wizard and by the server. Each entry carries its IMAP and SMTP settings, the
+app-password guidance shown during setup, and the hint appended to an
+authentication failure.
+
+An account **records the provider it was created from** and stores the complete
+connection settings alongside it. The provider is a template applied once, not a
+live reference: changing the catalogue never alters an account that already
+works, and nothing is ever re-derived from the email domain.
+
+To add or override a provider without forking, create
+`~/.imap-mcp/providers.json`:
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "acme",
+      "displayName": "ACME corporate mail",
+      "domains": ["acme.example"],
+      "imap": { "host": "mail.acme.example", "port": 993, "security": "implicit" },
+      "smtp": { "host": "mail.acme.example", "port": 587, "security": "starttls" }
+    },
+    { "id": "aol", "disabled": true }
+  ]
+}
+```
+
+Entries merge by `id`: a matching id **replaces** the built-in record entirely,
+a new id is appended, and `"disabled": true` hides a built-in tile. Whole
+replacement rather than field-by-field merge, so what you write is exactly what
+applies. `security` is `implicit` (TLS from the first byte, usually port 993 or
+465) or `starttls` (upgrade required; the connection fails rather than falling
+back to cleartext). An invalid file is reported and ignored, never fatal.
 
 - **imap_update_account**: Update an existing account (fix SMTP settings, rename, etc.)
   ```

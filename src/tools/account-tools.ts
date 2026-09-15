@@ -4,6 +4,7 @@ import { ImapService } from '../services/imap-service.js';
 import { SmtpService } from '../services/smtp-service.js';
 import { z } from 'zod';
 import { accountSelector } from './account-selector.js';
+import { getProviderById, getProviders } from '../providers/catalogue.js';
 
 export function accountTools(
   server: McpServer,
@@ -28,23 +29,44 @@ export function accountTools(
       sentFolder: z.string().optional().describe('Explicit Sent-folder name for saving sent-mail copies (e.g. "Gesendet"). Only needed when auto-detection fails — the server must lack a \\Sent SPECIAL-USE folder. Check names with imap_list_folders'),
       defaultBcc: z.union([z.string(), z.array(z.string())]).optional().describe('Optional BCC address(es) applied automatically to every outbound send, reply, forward, and draft for this account. Merged with any per-call bcc'),
       tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Needed for a local bridge serving a self-signed certificate, e.g. Proton Mail Bridge on 127.0.0.1:1143. Scoped to this account only'),
+      provider: z.string().optional().describe('Catalogue provider id this account is based on, e.g. "gmail", "protonmail" (see imap_list_accounts output or the setup wizard). Fills in any host/port/security left unspecified, and is recorded on the account so nothing has to be guessed from the email domain later'),
     }
-  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc, tlsCa }) => {
+  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc, tlsCa, provider }) => {
+    // A provider is a template: its values fill the gaps at write time and the
+    // complete result is stored. Nothing is resolved from the catalogue when
+    // connecting, so a later catalogue change cannot alter this account.
+    const picked = getProviderById(provider);
+    if (provider && !picked) {
+      throw new Error(`Unknown provider "${provider}". Known ids: ${getProviders().map(p => p.id).join(', ')}`);
+    }
+    const resolvedHost = host || picked?.imap?.host;
+    if (!resolvedHost) {
+      throw new Error('Either host or a provider with IMAP settings is required.');
+    }
+    const resolvedPort = host ? port : (picked?.imap?.port ?? port);
+    const resolvedTls = host ? tls : (picked?.imap ? picked.imap.security !== 'starttls' : tls);
     const smtp = (smtpHost || smtpPort !== undefined || smtpSecure !== undefined)
       ? {
-          host: smtpHost || host,
+          host: smtpHost || resolvedHost,
           port: smtpPort ?? 587,
           secure: smtpSecure ?? false,
         }
-      : undefined;
+      : picked?.smtp
+        ? {
+            host: picked.smtp.host,
+            port: picked.smtp.port,
+            secure: picked.smtp.security === 'implicit',
+          }
+        : undefined;
 
     const account = await accountManager.addAccount({
       name,
-      host,
-      port,
+      host: resolvedHost,
+      port: resolvedPort,
       user,
       password,
-      tls,
+      tls: resolvedTls,
+      ...(picked ? { provider: picked.id } : {}),
       ...(email ? { email } : {}),
       ...(smtp ? { smtp } : {}),
       ...(sentFolder ? { sentFolder } : {}),
@@ -167,6 +189,7 @@ export function accountTools(
             port: acc.port,
             user: acc.user,
             tls: acc.tls,
+            ...(acc.provider ? { provider: acc.provider } : {}),
           })),
         }, null, 2)
       }]

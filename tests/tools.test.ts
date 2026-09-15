@@ -36,36 +36,30 @@ describe('Tools Module', () => {
 });
 
 describe('Email Providers', () => {
-  it('should export email providers list', async () => {
-    const providersModule = await import('../src/providers/email-providers.js');
-    expect(providersModule.emailProviders).toBeDefined();
-    expect(Array.isArray(providersModule.emailProviders)).toBe(true);
+  it('should export the provider catalogue', async () => {
+    const { getProviders } = await import('../src/providers/catalogue.js');
+    expect(Array.isArray(getProviders())).toBe(true);
+    expect(getProviders().length).toBeGreaterThan(0);
   });
 
   it('should have provider detection function', async () => {
-    const providersModule = await import('../src/providers/email-providers.js');
-    expect(providersModule.getProviderByEmail).toBeDefined();
-    expect(typeof providersModule.getProviderByEmail).toBe('function');
+    const { getProviderByEmail } = await import('../src/providers/catalogue.js');
+    expect(typeof getProviderByEmail).toBe('function');
   });
 
   it('should detect gmail provider', async () => {
-    const { getProviderByEmail } = await import('../src/providers/email-providers.js');
-    const provider = getProviderByEmail('user@gmail.com');
-    expect(provider).toBeDefined();
-    expect(provider?.name).toBe('Gmail');
+    const { getProviderByEmail } = await import('../src/providers/catalogue.js');
+    expect(getProviderByEmail('user@gmail.com')?.id).toBe('gmail');
   });
 
   it('should detect outlook provider', async () => {
-    const { getProviderByEmail } = await import('../src/providers/email-providers.js');
-    const provider = getProviderByEmail('user@outlook.com');
-    expect(provider).toBeDefined();
-    expect(provider?.name).toBe('Outlook');
+    const { getProviderByEmail } = await import('../src/providers/catalogue.js');
+    expect(getProviderByEmail('user@outlook.com')?.id).toBe('outlook');
   });
 
   it('should return undefined for unknown domain', async () => {
-    const { getProviderByEmail } = await import('../src/providers/email-providers.js');
-    const provider = getProviderByEmail('user@unknowndomain12345.com');
-    expect(provider).toBeUndefined();
+    const { getProviderByEmail } = await import('../src/providers/catalogue.js');
+    expect(getProviderByEmail('user@unknowndomain12345.com')).toBeUndefined();
   });
 });
 

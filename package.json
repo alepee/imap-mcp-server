@@ -73,6 +73,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/keyring": "2.1.0",
     "@types/nodemailer": "^8.0.1",
     "body-parser": "^2.2.0",
     "chalk": "^6.0.0",

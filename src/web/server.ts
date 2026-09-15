@@ -10,6 +10,7 @@ import { AccountManager } from '../services/account-manager.js';
 import { ImapService } from '../services/imap-service.js';
 import { getProviders, getProviderByEmail, getProviderById } from '../providers/catalogue.js';
 import { ImapAccount } from '../types/index.js';
+import { systemKeychainName } from '../services/credential-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,6 +125,24 @@ export class WebUIServer {
   }
 
   private setupRoutes(): void {
+    this.app.get('/api/credential-storage', (_req, res) => {
+      try {
+        const accounts = this.accountManager.listAccountMetadata();
+        res.json({ name: systemKeychainName(), legacyAccounts: accounts.filter(account => account.credentialStorage === 'legacy').length });
+      } catch {
+        res.status(500).json({ error: 'Cannot read account storage information.' });
+      }
+    });
+
+    this.app.post('/api/accounts/migrate-credentials', async (_req, res) => {
+      try {
+        const result = await this.accountManager.migrateCredentials();
+        res.json({ success: true, ...result });
+      } catch (error) {
+        res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not save passwords in the system keychain.' });
+      }
+    });
+
     // Get all providers
     this.app.get('/api/providers', (req, res) => {
       res.json(getProviders());
@@ -132,7 +151,7 @@ export class WebUIServer {
     // Get all accounts
     this.app.get('/api/accounts', (req, res) => {
       try {
-        const accounts = this.accountManager.getAllAccounts();
+        const accounts = this.accountManager.listAccountMetadata();
         // Never send credentials to the client — see stripAccountSecrets.
         res.json(accounts.map(stripAccountSecrets));
       } catch (error) {
@@ -143,10 +162,11 @@ export class WebUIServer {
     // Add new account
     this.app.post('/api/accounts', async (req, res) => {
       try {
+        if (Object.keys(req.body).some(key => key.endsWith('FromEnv') && req.body[key])) {
+          throw new Error('Environment-managed credentials are no longer offered. Reload the setup wizard and enter your passwords to save them in the system keychain.');
+        }
         const {
           name, email, password, host, port, tls, smtp, imapUsername, sentFolder, defaultBcc, tlsCa, provider,
-          imapUsernameFromEnv, imapPasswordFromEnv,
-          smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
 
         // Auto-detect provider if not specified
@@ -164,21 +184,17 @@ export class WebUIServer {
           useTls = picked.imap.security !== 'starttls';
         }
 
-        // Credentials flagged as env-managed are stored as empty placeholders;
-        // the corresponding IMAP_MCP_ACCOUNT_* env var supplies them at runtime.
         const account = await this.accountManager.addAccount({
           name: name || email,
           host: imapHost,
           port: imapPort || 993,
-          user: imapUsernameFromEnv ? '' : (imapUsername || email),
-          password: imapPasswordFromEnv ? '' : password,
+          user: imapUsername || email,
+          password,
           tls: useTls !== false,
-          ...(imapUsername || imapUsernameFromEnv ? { email } : {}),
+          ...(imapUsername ? { email } : {}),
           smtp: smtp
             ? {
                 ...smtp,
-                ...(smtpUsernameFromEnv ? { user: '' } : {}),
-                ...(smtpPasswordFromEnv ? { password: '' } : {}),
               }
             : undefined,
           ...(typeof sentFolder === 'string' && sentFolder ? { sentFolder } : {}),
@@ -254,31 +270,24 @@ export class WebUIServer {
     // Update account
     this.app.put('/api/accounts/:id', async (req, res) => {
       try {
+        if (Object.keys(req.body).some(key => key.endsWith('FromEnv') && req.body[key])) {
+          throw new Error('Environment-managed credentials are no longer offered. Reload the setup wizard and enter your passwords to save them in the system keychain.');
+        }
         const {
           name, email, password, host, port, tls, smtp, saveToSent, imapUsername, sentFolder, defaultBcc, tlsCa, provider,
-          imapUsernameFromEnv, imapPasswordFromEnv,
-          smtpUsernameFromEnv, smtpPasswordFromEnv,
         } = req.body;
 
         const updates: any = {};
         if (name !== undefined) updates.name = name;
-        // Env-managed username → store an empty placeholder for it.
-        if (imapUsernameFromEnv) {
-          updates.user = '';
-          if (email !== undefined) updates.email = email;
-        } else if (imapUsername) {
+        if (imapUsername) {
           updates.user = imapUsername;
           if (email !== undefined) updates.email = email;
         } else if (email !== undefined) {
           updates.user = email;
           updates.email = undefined;
         }
-        // Env-managed password → empty placeholder; otherwise only update when sent.
-        if (imapPasswordFromEnv) {
-          updates.password = '';
-        } else if (password !== undefined && password !== '') {
-          updates.password = password;
-        }
+        // A blank edit input means keep the saved password.
+        if (password !== undefined && password !== '') updates.password = password;
         if (host !== undefined) updates.host = host;
         if (port !== undefined) updates.port = port;
         if (tls !== undefined) updates.tls = tls;
@@ -287,8 +296,6 @@ export class WebUIServer {
           updates.smtp = {
             ...smtpFields,
             ...(smtpPassword !== undefined && smtpPassword !== '' ? { password: smtpPassword } : {}),
-            ...(smtpUsernameFromEnv ? { user: '' } : {}),
-            ...(smtpPasswordFromEnv ? { password: '' } : {}),
           };
         }
         if (saveToSent !== undefined) updates.saveToSent = saveToSent;
@@ -323,7 +330,7 @@ export class WebUIServer {
     // Get single account
     this.app.get('/api/accounts/:id', async (req, res) => {
       try {
-        const account = this.accountManager.getAccount(req.params.id);
+        const account = this.accountManager.getAccountMetadata(req.params.id);
         if (!account) {
           res.status(404).json({ success: false, error: 'Account not found' });
         } else {

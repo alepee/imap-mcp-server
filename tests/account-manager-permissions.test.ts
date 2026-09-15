@@ -2,32 +2,29 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fsp, statSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { vi } from 'vitest';
+import { MemoryCredentialStore } from './helpers/credential-store.js';
 
-// Real filesystem test (no fs mock): the credential store holds the raw AES key
-// and the encrypted accounts, so both — and their directory — must be readable
-// only by the owner. POSIX-only; Windows has no comparable mode bits.
+// Metadata and its directory must remain owner-only. POSIX-only.
 const runOnPosix = process.platform === 'win32' ? describe.skip : describe;
 
 runOnPosix('AccountManager credential-store permissions', () => {
   let tmpHome: string;
-  let prevHome: string | undefined;
 
   beforeEach(async () => {
-    prevHome = process.env.HOME;
     tmpHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'imap-mcp-perms-'));
     // AccountManager derives ~/.imap-mcp from os.homedir(), which honours $HOME.
-    process.env.HOME = tmpHome;
+    vi.spyOn(os, 'homedir').mockReturnValue(tmpHome);
   });
 
   afterEach(async () => {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
+    vi.restoreAllMocks();
     await fsp.rm(tmpHome, { recursive: true, force: true });
   });
 
-  it('writes .key, accounts.json and their directory owner-only', async () => {
+  it('writes reference-only accounts.json owner-only without creating a local encryption key', async () => {
     const { AccountManager } = await import('../src/services/account-manager.js');
-    const manager = new AccountManager();
+    const manager = new AccountManager({ credentialStore: new MemoryCredentialStore() });
 
     await manager.addAccount({
       name: 'Test',
@@ -41,7 +38,7 @@ runOnPosix('AccountManager credential-store permissions', () => {
     const dir = path.join(tmpHome, '.imap-mcp');
     const mode = (p: string) => statSync(p).mode & 0o777;
 
-    expect(mode(path.join(dir, '.key'))).toBe(0o600);
+    await expect(fsp.stat(path.join(dir, '.key'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(mode(path.join(dir, 'accounts.json'))).toBe(0o600);
     expect(mode(dir)).toBe(0o700);
   });

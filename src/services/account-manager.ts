@@ -1,40 +1,41 @@
 import { promises as fs } from 'fs';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { ImapAccount, SmtpConfig } from '../types/index.js';
 import { ENV_CREDENTIAL_SUFFIXES, envVarName } from '../utils/env-credentials.js';
+import { CredentialStore, SystemCredentialStore } from './credential-store.js';
 
 export type AccountUpdates = Partial<Omit<ImapAccount, 'id' | 'smtp'>> & { smtp?: Partial<SmtpConfig> };
 
+type StoredAccount = Omit<ImapAccount, 'password'> & { password?: string; credentialRef?: string };
+type Passwords = { imap: string; smtp?: string };
+
 export class AccountManager {
   private configPath: string;
-  private accounts: Map<string, ImapAccount> = new Map();
-  private encryptionKey: string;
+  private accounts: Map<string, StoredAccount> = new Map();
+  // Only legacy environment values use this ephemeral in-memory key.
+  private encryptionKey = crypto.randomBytes(32).toString('hex');
+  private credentialStore: CredentialStore;
   private capturedEnvOverrides: Map<string, string> = new Map();
 
   private static readonly ENV_OVERRIDE_PATTERN =
     /^IMAP_MCP_ACCOUNT_.+_(?:IMAP|SMTP)_(?:USERNAME|PASSWORD)$/;
 
-  constructor() {
-    this.configPath = path.join(os.homedir(), '.imap-mcp', 'accounts.json');
-    this.encryptionKey = this.getOrCreateEncryptionKey();
+  constructor(options: { credentialStore?: CredentialStore; configPath?: string } = {}) {
+    this.configPath = options.configPath ?? path.join(os.homedir(), '.imap-mcp', 'accounts.json');
+    this.credentialStore = options.credentialStore ?? new SystemCredentialStore();
     this.captureEnvOverrides();
     this.loadAccountsSync();
   }
 
   async addAccount(account: Omit<ImapAccount, 'id'>): Promise<ImapAccount> {
-    const id = crypto.randomUUID();
-    const stored = {
-      ...account, id, password: this.encrypt(account.password),
-      ...(account.smtp ? { smtp: {
-        ...account.smtp,
-        ...(account.smtp.password !== undefined ? { password: this.encrypt(account.smtp.password) } : {}),
-      } } : {}),
-    };
-    await this.transaction(accounts => { accounts.set(id, stored); });
-    return { ...account, id };
+    const created = { ...account, id: crypto.randomUUID() };
+    await this.transaction((accounts, createdRefs) => {
+      accounts.set(created.id, this.storeAccount(created, createdRefs));
+    });
+    return created;
   }
 
   async removeAccount(id: string): Promise<void> {
@@ -44,56 +45,115 @@ export class AccountManager {
   }
 
   async updateAccount(id: string, updates: AccountUpdates): Promise<ImapAccount> {
-    const updated = await this.transaction(accounts => {
-      const existing = accounts.get(id);
-      if (!existing) throw new Error(`Account with id ${id} not found`);
-      // Merge against the stored record, never a getter result: getters may
-      // contain environment overrides, which must never be persisted.
+    return this.transaction((accounts, createdRefs) => {
+      const stored = accounts.get(id);
+      if (!stored) throw new Error(`Account with id ${id} not found`);
+      const existing = this.resolveCredentials(stored);
       const { smtp, ...fields } = updates;
       const next: ImapAccount = { ...existing, ...fields, id };
-      if (fields.password !== undefined) next.password = this.encrypt(fields.password);
       if (smtp !== undefined) {
         next.smtp = {
           host: existing.host, port: 587, secure: false,
           ...existing.smtp, ...Object.fromEntries(Object.entries(smtp).filter(([, value]) => value !== undefined)),
         };
-        if (smtp.password !== undefined) next.smtp.password = this.encrypt(smtp.password);
       }
-      accounts.set(id, next);
+      // Every mutation uses a new, verified reference. A failed JSON commit
+      // cannot overwrite the secrets still referenced by the previous file.
+      accounts.set(id, this.storeAccount(next, createdRefs));
       return next;
     });
-    return {
-      ...updated, password: this.decryptField(updated.password),
-      ...(updated.smtp ? { smtp: { ...updated.smtp,
-        ...(updated.smtp.password !== undefined ? { password: this.decryptField(updated.smtp.password) } : {}),
-      } } : {}),
-    };
+  }
+
+  /** Metadata-only reads do not touch the keychain, including in the wizard. */
+  listAccountMetadata() {
+    return Array.from(this.readAccounts().values()).map(account => this.metadata(account));
+  }
+
+  getAccountMetadata(id: string) {
+    const account = this.readAccounts().get(id);
+    return account ? this.metadata(account) : undefined;
+  }
+
+  private metadata(account: StoredAccount) {
+    const { password: _password, credentialRef, smtp, ...rest } = account;
+    const { password: _smtpPassword, ...smtpMetadata } = smtp ?? {};
+    return { ...rest, ...(smtp ? { smtp: smtpMetadata } : {}),
+      credentialStorage: credentialRef ? 'system' as const : 'legacy' as const };
   }
 
   getAccount(id: string): ImapAccount | undefined {
-    this.loadAccountsSync();
-    const account = this.accounts.get(id);
+    const account = this.readAccounts().get(id);
     if (!account) return undefined;
+    try {
+      return this.resolveCredentials(account);
+    } catch (error) {
+      // Another process may have committed a replacement and retired the old
+      // reference between our config read and keychain lookup. Retry once.
+      const latest = this.readAccounts().get(id);
+      if (latest && latest.credentialRef !== account.credentialRef) return this.resolveCredentials(latest);
+      throw error;
+    }
+  }
 
-    const decrypted: ImapAccount = {
-      ...account,
-      password: this.decryptField(account.password),
-    };
-
-    if (account.smtp?.password) {
-      decrypted.smtp = {
-        ...account.smtp,
-        password: this.decryptField(account.smtp.password),
+  private resolveCredentials(account: StoredAccount): ImapAccount {
+    const { credentialRef, ...rest } = account;
+    if (credentialRef) {
+      const raw = this.credentialStore.get(credentialRef);
+      if (raw === null) throw new Error('Saved passwords are missing from the system keychain. Restore the entry or remove and recreate this account in the setup wizard.');
+      let passwords: Passwords;
+      try {
+        passwords = JSON.parse(raw);
+        if (typeof passwords?.imap !== 'string' || (passwords.smtp !== undefined && typeof passwords.smtp !== 'string')) throw new Error();
+      } catch {
+        throw new Error('The saved keychain entry is invalid. Restore it or recreate this account.');
+      }
+      return { ...rest, password: passwords.imap,
+        ...(rest.smtp ? { smtp: { ...rest.smtp, ...(passwords.smtp !== undefined ? { password: passwords.smtp } : {}) } } : {}),
       };
     }
+    return this.applyEnvOverrides({ ...rest, password: this.decryptLegacyField(rest.password),
+      ...(rest.smtp ? { smtp: { ...rest.smtp,
+        ...(rest.smtp.password !== undefined ? { password: this.decryptLegacyField(rest.smtp.password) } : {}),
+      } } : {}),
+    });
+  }
 
-    return this.applyEnvOverrides(decrypted);
+  private storeAccount(account: ImapAccount, createdRefs: string[]): StoredAccount {
+    if (!account.user || !account.password || account.smtp?.user === '' || account.smtp?.password === '') {
+      throw new Error(`Enter the missing username or password for account "${account.name}" in the setup wizard before saving it to the system keychain.`);
+    }
+    const credentialRef = crypto.randomUUID();
+    const passwords: Passwords = { imap: account.password,
+      ...(account.smtp?.password !== undefined ? { smtp: account.smtp.password } : {}),
+    };
+    const serialized = JSON.stringify(passwords);
+    // Track before set: even a partially failing native write may create an entry.
+    createdRefs.push(credentialRef);
+    this.credentialStore.set(credentialRef, serialized);
+    if (this.credentialStore.get(credentialRef) !== serialized) {
+      throw new Error('The system keychain could not verify the saved passwords. Your previous configuration is unchanged.');
+    }
+    const { password: _password, smtp, ...rest } = account;
+    const { password: _smtpPassword, ...smtpSettings } = smtp ?? {};
+    return { ...rest, ...(smtp ? { smtp: smtpSettings as SmtpConfig } : {}), credentialRef };
+  }
+
+  /** Explicit wizard action: all legacy entries migrate, or none are published. */
+  async migrateCredentials(): Promise<{ migrated: number }> {
+    return this.transaction((accounts, createdRefs) => {
+      let migrated = 0;
+      for (const [id, account] of accounts) {
+        if (account.credentialRef) continue;
+        accounts.set(id, this.storeAccount(this.resolveCredentials(account), createdRefs));
+        migrated++;
+      }
+      return { migrated };
+    });
   }
 
   /**
    * Override IMAP/SMTP credentials from environment variables, keyed by the
-   * account's normalized name. This lets credentials be supplied at runtime
-   * (e.g. from a secret manager) instead of the encrypted `accounts.json`.
+   * account's normalized name. Only used for legacy accounts until migration; native accounts ignore these.
    *
    *   IMAP_MCP_ACCOUNT_<NAME>_IMAP_USERNAME  -> user
    *   IMAP_MCP_ACCOUNT_<NAME>_IMAP_PASSWORD  -> password
@@ -183,22 +243,7 @@ export class AccountManager {
   }
 
   getAllAccounts(): ImapAccount[] {
-    this.loadAccountsSync();
-    return Array.from(this.accounts.values()).map(account => {
-      const decrypted: ImapAccount = {
-        ...account,
-        password: this.decryptField(account.password),
-      };
-
-      if (account.smtp?.password) {
-        decrypted.smtp = {
-          ...account.smtp,
-          password: this.decryptField(account.smtp.password),
-        };
-      }
-
-      return this.applyEnvOverrides(decrypted);
-    });
+    return Array.from(this.readAccounts().keys()).map(id => this.getAccount(id)!);
   }
 
   /**
@@ -239,33 +284,18 @@ export class AccountManager {
   }
 
   getAccountByName(name: string): ImapAccount | undefined {
-    this.loadAccountsSync();
-    const account = Array.from(this.accounts.values()).find(acc => acc.name === name);
-    if (!account) return undefined;
-
-    const decrypted: ImapAccount = {
-      ...account,
-      password: this.decryptField(account.password),
-    };
-
-    if (account.smtp?.password) {
-      decrypted.smtp = {
-        ...account.smtp,
-        password: this.decryptField(account.smtp.password),
-      };
-    }
-
-    return this.applyEnvOverrides(decrypted);
+    const account = Array.from(this.readAccounts().values()).find(account => account.name === name);
+    return account ? this.getAccount(account.id) : undefined;
   }
 
-  private readAccounts(): Map<string, ImapAccount> {
+  private readAccounts(): Map<string, StoredAccount> {
     try {
       const accounts = JSON.parse(readFileSync(this.configPath, 'utf-8'));
       if (!Array.isArray(accounts) || accounts.some(account =>
         !account || typeof account.id !== 'string' || typeof account.name !== 'string')) {
         throw new Error('Invalid account store');
       }
-      const result = new Map<string, ImapAccount>(accounts.map(account => [account.id, account]));
+      const result = new Map<string, StoredAccount>(accounts.map(account => [account.id, account]));
       if (result.size !== accounts.length) throw new Error('Duplicate account ids');
       return result;
     } catch (error) {
@@ -279,7 +309,7 @@ export class AccountManager {
     this.accounts = this.readAccounts();
   }
 
-  private async transaction<T>(change: (accounts: Map<string, ImapAccount>) => T): Promise<T> {
+  private async transaction<T>(change: (accounts: Map<string, StoredAccount>, createdRefs: string[]) => T): Promise<T> {
     const dir = path.dirname(this.configPath);
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     const lockPath = this.configPath + '.lock';
@@ -298,18 +328,39 @@ export class AccountManager {
         await new Promise(resolve => setTimeout(resolve, 25));
       }
     }
+    const createdRefs: string[] = [];
+    let committed = false;
     try {
-      const accounts = this.readAccounts();
-      const result = change(accounts);
+      const previous = this.readAccounts();
+      const accounts = new Map(previous);
+      const result = change(accounts, createdRefs);
       await this.saveAccounts(accounts);
+      committed = true;
       this.accounts = accounts;
+      const active = new Set(Array.from(accounts.values()).map(account => account.credentialRef));
+      for (const account of previous.values()) {
+        if (account.credentialRef && !active.has(account.credentialRef)) this.retireCredential(account.credentialRef);
+      }
+      if (Array.from(accounts.values()).every(account => account.credentialRef)) {
+        // Only after a successful atomic config replacement. Native entries
+        // were read back before that replacement, so legacy copies are retired last.
+        await fs.unlink(path.join(path.dirname(this.configPath), '.key')).catch(error => {
+          if (error.code !== 'ENOENT') console.error('Could not remove the retired legacy key file.');
+        });
+      }
       return result;
     } finally {
+      if (!committed) for (const reference of createdRefs) this.retireCredential(reference);
       await fs.rmdir(lockPath);
     }
   }
 
-  private async saveAccounts(accounts: Map<string, ImapAccount>): Promise<void> {
+  private retireCredential(reference: string): void {
+    try { this.credentialStore.delete(reference); }
+    catch { console.error(`Could not remove retired keychain entry ${reference}; it is no longer needed by this operation.`); }
+  }
+
+  private async saveAccounts(accounts: Map<string, StoredAccount>): Promise<void> {
     const temporary = this.configPath + '.' + crypto.randomUUID() + '.tmp';
     try {
       const file = await fs.open(temporary, 'wx', 0o600);
@@ -329,9 +380,7 @@ export class AccountManager {
   }
 
   /**
-   * Defence in depth for the credential store. `~/.imap-mcp/` holds the raw
-   * AES-256 key and the (encrypted) accounts, so anyone able to read the key
-   * plus the store can recover every password. The `mode` options above only
+   * Defence in depth for metadata and any remaining legacy key. The `mode` options above only
    * apply when a file is *created*; a store written before this hardening — or
    * under a permissive umask — could still be world-readable. Re-assert
    * owner-only permissions on the directory, the accounts file, and the key.
@@ -358,41 +407,6 @@ export class AccountManager {
     }
   }
 
-  private getOrCreateEncryptionKey(): string {
-    const keyPath = path.join(os.homedir(), '.imap-mcp', '.key');
-    
-    try {
-      const key = readFileSync(keyPath, 'utf-8');
-      if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error('Invalid encryption key; restore the original .key file.');
-      return key;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      // Losing the key must not silently create a replacement for an existing store.
-      try {
-        readFileSync(this.configPath, 'utf-8');
-      } catch (storeError) {
-        if ((storeError as NodeJS.ErrnoException).code !== 'ENOENT') throw storeError;
-        return this.createEncryptionKey(keyPath);
-      }
-      throw new Error('Encryption key is missing for the existing account store; restore the original .key file.');
-    }
-  }
-
-  private createEncryptionKey(keyPath: string): string {
-    const key = crypto.randomBytes(32).toString('hex');
-    mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
-    try {
-      writeFileSync(keyPath, key, { mode: 0o600, flag: 'wx' });
-      return key;
-    } catch (writeError) {
-      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
-      // Another process won creation. Never replace its key.
-      const existing = readFileSync(keyPath, 'utf-8');
-      if (!/^[a-f0-9]{64}$/i.test(existing)) throw new Error('Encryption key creation in progress; retry startup.');
-      return existing;
-    }
-  }
-
   private encrypt(text: string): string {
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(
@@ -407,24 +421,20 @@ export class AccountManager {
     return iv.toString('hex') + ':' + encrypted;
   }
 
-  /**
-   * Decrypt a stored credential field.
-   *
-   * A missing or empty value (null, undefined, or "") is treated as "no
-   * credential" and returns an empty string — the env-override mechanism can
-   * still fill it at runtime. A non-empty value that is not a well-formed
-   * encrypted string (missing the "iv:ciphertext" separator, or otherwise
-   * undecryptable) is a corrupt entry and throws, rather than being silently
-   * swallowed.
-   */
-  private decryptField(value: string | null | undefined): string {
-    if (value === undefined || value === null || value === '') {
-      return '';
-    }
+  private decryptLegacyField(value: string | null | undefined): string {
+    if (value === undefined || value === null || value === '') return '';
     if (typeof value !== 'string' || !value.includes(':')) {
       throw new Error('Cannot decrypt credential field: value is not a valid encrypted string');
     }
-    return this.decrypt(value);
+    try {
+      const key = readFileSync(path.join(path.dirname(this.configPath), '.key'), 'utf-8');
+      if (!/^[a-f0-9]{64}$/i.test(key)) throw new Error();
+      const [iv, encrypted] = value.split(':');
+      const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
+      return decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8');
+    } catch {
+      throw new Error('Cannot read legacy passwords. Restore the original .key file or remove and recreate this account in the setup wizard.');
+    }
   }
 
   private decrypt(text: string): string {

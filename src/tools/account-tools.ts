@@ -14,7 +14,7 @@ export function accountTools(
 ): void {
   // Add account tool
   server.registerTool('imap_add_account', {
-    description: 'Add a new IMAP account configuration',
+    description: 'Add an IMAP account and save its passwords in the system keychain. Requires an available, unlocked OS credential store; never falls back to local password files',
     inputSchema: {
       name: z.string().describe('Friendly name for the account'),
       host: z.string().describe('IMAP server hostname'),
@@ -90,7 +90,7 @@ export function accountTools(
 
   // Update account tool — lets callers fix SMTP config (and other fields) on existing accounts
   server.registerTool('imap_update_account', {
-    description: 'Update an existing IMAP account. Useful for fixing SMTP settings without removing and re-adding the account. Omitted SMTP credentials are preserved; environment overrides are never copied to storage by a partial update.',
+    description: 'Update an existing IMAP account. Useful for fixing SMTP settings without removing and re-adding the account. Omitted SMTP credentials are preserved; passwords are saved and verified in the system keychain. Editing a legacy account migrates its credentials.',
     inputSchema: {
       accountId: z.string().describe('ID of the account to update'),
       name: z.string().optional().describe('New friendly name'),
@@ -111,11 +111,6 @@ export function accountTools(
       tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Pass an empty string to clear and go back to the system trust store'),
     }
   }, async ({ accountId, name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, saveToSent, sentFolder, defaultBcc, tlsCa }) => {
-    const existing = accountManager.getAccount(accountId);
-    if (!existing) {
-      throw new Error(`Account ${accountId} not found`);
-    }
-
     const updates: any = {};
     if (name !== undefined) updates.name = name;
     if (host !== undefined) updates.host = host;
@@ -171,10 +166,10 @@ export function accountTools(
 
   // List accounts tool
   server.registerTool('imap_list_accounts', {
-    description: 'List all configured IMAP accounts',
+    description: 'List configured IMAP accounts without unlocking or reading passwords from the system keychain',
     inputSchema: {}
   }, async () => {
-    const accounts = accountManager.getAllAccounts();
+    const accounts = accountManager.listAccountMetadata();
     
     return {
       content: [{

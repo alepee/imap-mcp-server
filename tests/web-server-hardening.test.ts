@@ -24,8 +24,8 @@ const decryptedAccount = (over: Record<string, any> = {}) => ({
 });
 
 const fakeAccountManager = {
-  getAllAccounts: () => [decryptedAccount()],
-  getAccount: (id: string) => (id === 'a1' ? decryptedAccount() : undefined),
+  listAccountMetadata: () => [decryptedAccount()],
+  getAccountMetadata: (id: string) => (id === 'a1' ? decryptedAccount() : undefined),
   // Mirrors the real AccountManager: returns a DECRYPTED account.
   updateAccount: async (_id: string, updates: Record<string, any>) => ({ ...decryptedAccount(), ...updates }),
   // Mirrors the real AccountManager: echoes the plaintext password back.

@@ -1,675 +1,208 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { promises as fs } from 'fs';
-import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
 import os from 'os';
+import path from 'path';
+import { AccountManager } from '../src/services/account-manager.js';
+import { MemoryCredentialStore } from './helpers/credential-store.js';
+import { writeLegacyAccounts } from './helpers/legacy-accounts.js';
 
-// Mock the file system for tests
-vi.mock('fs', async () => {
-  const actual = await vi.importActual('fs');
-  return {
-    ...actual,
-    promises: {
-      readFile: vi.fn(),
-      writeFile: vi.fn(),
-      mkdir: vi.fn(),
-      open: vi.fn(),
-      rename: vi.fn(),
-      unlink: vi.fn(),
-      rmdir: vi.fn(),
-      chmod: vi.fn(),
-    },
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    mkdirSync: vi.fn(),
-  };
+let dir: string;
+let configPath: string;
+let vault: MemoryCredentialStore;
+const fixture = { id: 'legacy', name: 'Work', host: 'imap.example.invalid', port: 993, tls: true,
+  user: 'user@example.invalid', password: 'synthetic-imap',
+  smtp: { host: 'smtp.example.invalid', port: 587, secure: false, user: 'smtp-user', password: 'synthetic-smtp' },
+};
+const manager = () => new AccountManager({ configPath, credentialStore: vault });
+const stored = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'imap-keychain-manager-'));
+  configPath = path.join(dir, 'accounts.json');
+  vault = new MemoryCredentialStore();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Need to import after mocking
-import { AccountManager } from '../src/services/account-manager.js';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-
-describe('AccountManager', () => {
-  const mockEncryptionKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-
-    const files = new Map<string, string>();
-    vi.mocked(readFileSync).mockImplementation(((p: any) => {
-      if (String(p).endsWith('.key')) return mockEncryptionKey;
-      if (files.has(String(p))) return files.get(String(p));
-      throw Object.assign(new Error('Missing file'), { code: 'ENOENT' });
-    }) as any);
-    vi.mocked(fs.writeFile).mockImplementation(async (p: any, data: any) => { files.set(String(p), String(data)); });
-    vi.mocked(fs.open).mockImplementation((async (p: any) => ({
-      writeFile: (data: any) => fs.writeFile(p, data),
-      sync: async () => {}, close: async () => {},
-    })) as any);
-    vi.mocked(fs.rename).mockImplementation(async (from: any, to: any) => {
-      files.set(String(to), files.get(String(from))!);
-      files.delete(String(from));
-    });
-    vi.mocked(fs.unlink).mockResolvedValue(undefined);
-    vi.mocked(fs.rmdir).mockResolvedValue(undefined);
-    vi.mocked(fs.mkdir).mockResolvedValue(undefined);
-
+describe('system keychain account lifecycle', () => {
+  it('creates no local encryption key and stores only secret references', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    expect(service.getAccount(created.id)).toMatchObject(fixtureWithoutId());
+    const record = stored()[0];
+    expect(record.credentialRef).toMatch(/^[a-f0-9-]{36}$/);
+    expect(record.password).toBeUndefined();
+    expect(record.smtp.password).toBeUndefined();
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(false);
+    expect(vault.entries.size).toBe(1);
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-
-    // Remove any env-var overrides set by individual tests
-    for (const key of Object.keys(process.env)) {
-      if (key.startsWith('IMAP_MCP_ACCOUNT_')) {
-        delete process.env[key];
-      }
-    }
+  it('preserves absent SMTP credentials, rotates references and deletes retired secrets', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    const originalRef = stored()[0].credentialRef;
+    await service.updateAccount(created.id, { name: 'Renamed', smtp: { port: 465 } });
+    expect(service.getAccount(created.id)).toMatchObject({ name: 'Renamed', password: fixture.password, smtp: { password: fixture.smtp.password, port: 465 } });
+    expect(stored()[0].credentialRef).not.toBe(originalRef);
+    expect(vault.get(originalRef)).toBeNull();
+    expect(vault.entries.size).toBe(1);
   });
 
-  describe('constructor', () => {
-    it('should create account manager with correct config path', () => {
-      const manager = new AccountManager();
-      expect(manager).toBeDefined();
-    });
-
-    it('should create encryption key if not exists', () => {
-      vi.mocked(readFileSync).mockImplementation(() => {
-        throw Object.assign(new Error('File not found'), { code: 'ENOENT' });
-      });
-
-      const manager = new AccountManager();
-      expect(manager).toBeDefined();
-      expect(writeFileSync).toHaveBeenCalled();
-    });
+  it('replaces passwords without writing either value into configuration', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    await service.updateAccount(created.id, { password: 'new-fixture', smtp: { password: 'new-smtp-fixture' } });
+    expect(service.getAccount(created.id)).toMatchObject({ password: 'new-fixture', smtp: { password: 'new-smtp-fixture' } });
+    expect(fs.readFileSync(configPath, 'utf8')).not.toContain('new-fixture');
   });
 
-  describe('addAccount', () => {
-    it('should add account with generated id', async () => {
-      const manager = new AccountManager();
-
-      const account = await manager.addAccount({
-        name: 'Test Account',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret123',
-        tls: true,
-      });
-
-      expect(account.id).toBeDefined();
-      expect(account.name).toBe('Test Account');
-      expect(account.host).toBe('imap.test.com');
-      expect(account.user).toBe('user@test.com');
-      expect(account.password).toBe('secret123'); // Returns unencrypted
-    });
-
-    it('should save accounts after adding', async () => {
-      const manager = new AccountManager();
-
-      await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
-
-      expect(fs.writeFile).toHaveBeenCalled();
-    });
-
-    it('should encrypt password when storing', async () => {
-      const manager = new AccountManager();
-
-      await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
-
-      // Check that writeFile was called with encrypted data
-      const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
-      const savedData = JSON.parse(writeCall[1] as string);
-
-      // Password should be encrypted (contains :)
-      expect(savedData[0].password).toContain(':');
-      expect(savedData[0].password).not.toBe('secret');
-    });
-
-    it('should handle SMTP config with encrypted password', async () => {
-      const manager = new AccountManager();
-
-      const account = await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'imapSecret',
-        tls: true,
-        smtp: {
-          host: 'smtp.test.com',
-          port: 587,
-          secure: false,
-          password: 'smtpSecret',
-        },
-      });
-
-      expect(account.smtp?.password).toBe('smtpSecret'); // Returns unencrypted
-    });
+  it('retains IMAP fallback when SMTP has no separate password', async () => {
+    const service = manager();
+    const created = await service.addAccount({ ...fixture, smtp: { host: 'smtp.example.invalid', port: 587, secure: false } });
+    await service.updateAccount(created.id, { smtp: { port: 465 } });
+    expect(service.getAccount(created.id)?.smtp?.password).toBeUndefined();
+    expect(service.getAccount(created.id)?.password).toBe(fixture.password);
   });
 
-  describe('getAccount', () => {
-    it('should return undefined for non-existent account', () => {
-      const manager = new AccountManager();
-      const account = manager.getAccount('non-existent-id');
-      expect(account).toBeUndefined();
-    });
-
-    it('should return decrypted account', async () => {
-      const manager = new AccountManager();
-
-      const created = await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'mypassword',
-        tls: true,
-      });
-
-      const retrieved = manager.getAccount(created.id);
-
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.password).toBe('mypassword');
-    });
+  it('removes references and keychain secrets when removing accounts', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    await service.removeAccount(created.id);
+    expect(service.getAccount(created.id)).toBeUndefined();
+    expect(vault.entries.size).toBe(0);
+    expect(stored()).toEqual([]);
   });
 
-  describe('getAllAccounts', () => {
-    it('should return empty array when no accounts', () => {
-      const manager = new AccountManager();
-      const accounts = manager.getAllAccounts();
-      expect(accounts).toEqual([]);
-    });
-
-    it('should return all accounts with decrypted passwords', async () => {
-      const manager = new AccountManager();
-
-      await manager.addAccount({
-        name: 'Account 1',
-        host: 'imap1.test.com',
-        port: 993,
-        user: 'user1@test.com',
-        password: 'pass1',
-        tls: true,
-      });
-
-      await manager.addAccount({
-        name: 'Account 2',
-        host: 'imap2.test.com',
-        port: 993,
-        user: 'user2@test.com',
-        password: 'pass2',
-        tls: true,
-      });
-
-      const accounts = manager.getAllAccounts();
-
-      expect(accounts.length).toBe(2);
-      expect(accounts[0].password).toBe('pass1');
-      expect(accounts[1].password).toBe('pass2');
-    });
+  it('lists metadata without reading the keychain', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    const get = vi.spyOn(vault, 'get').mockImplementation(() => { throw new Error('locked'); });
+    expect(service.listAccountMetadata()[0]).toMatchObject({ id: created.id, credentialStorage: 'system' });
+    expect(service.getAccountMetadata(created.id)?.smtp).not.toHaveProperty('password');
+    expect(service.getAccountMetadata(created.id)).not.toHaveProperty('credentialRef');
+    expect(get).not.toHaveBeenCalled();
   });
 
-  describe('getAccountByName', () => {
-    it('should find account by name', async () => {
-      const manager = new AccountManager();
-
-      await manager.addAccount({
-        name: 'My Email',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
-
-      const account = manager.getAccountByName('My Email');
-
-      expect(account).toBeDefined();
-      expect(account?.name).toBe('My Email');
-    });
-
-    it('should return undefined for non-existent name', () => {
-      const manager = new AccountManager();
-      const account = manager.getAccountByName('Non Existent');
-      expect(account).toBeUndefined();
-    });
+  it('reports a missing entry instead of dialing with blank credentials', async () => {
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    vault.entries.clear();
+    expect(() => service.getAccount(created.id)).toThrow(/missing from the system keychain/);
   });
 
-  describe('resolveAccountId', () => {
-    const addOne = (manager: AccountManager, name: string) => manager.addAccount({
-      name, host: 'imap.test.com', port: 993, user: `${name}@test.com`, password: 'pw', tls: true,
-    });
-
-    it('returns the id when an explicit accountId exists', async () => {
-      const manager = new AccountManager();
-      const created = await addOne(manager, 'A');
-      expect(manager.resolveAccountId(created.id)).toBe(created.id);
-    });
-
-    it('throws for an unknown accountId', async () => {
-      const manager = new AccountManager();
-      await addOne(manager, 'A');
-      expect(() => manager.resolveAccountId('nope')).toThrow(/not found/i);
-    });
-
-    it('resolves by accountName', async () => {
-      const manager = new AccountManager();
-      const created = await addOne(manager, 'Work');
-      expect(manager.resolveAccountId(undefined, 'Work')).toBe(created.id);
-    });
-
-    it('throws for an unknown accountName', async () => {
-      const manager = new AccountManager();
-      await addOne(manager, 'Work');
-      expect(() => manager.resolveAccountId(undefined, 'Home')).toThrow(/no account named/i);
-    });
-
-    it('defaults to the only account when none is specified', async () => {
-      const manager = new AccountManager();
-      const created = await addOne(manager, 'Solo');
-      expect(manager.resolveAccountId()).toBe(created.id);
-    });
-
-    it('throws when no accounts are configured', () => {
-      const manager = new AccountManager();
-      expect(() => manager.resolveAccountId()).toThrow(/no accounts configured/i);
-    });
-
-    it('throws when multiple accounts exist and none is specified', async () => {
-      const manager = new AccountManager();
-      await addOne(manager, 'A');
-      await addOne(manager, 'B');
-      expect(() => manager.resolveAccountId()).toThrow(/multiple accounts/i);
-    });
+  it.each([{ user: '' }, { password: '' }, { smtp: { ...fixture.smtp, password: '' } }])('rejects unresolved credentials: %j', async fields => {
+    await expect(manager().addAccount({ ...fixture, ...fields })).rejects.toThrow(/missing username or password/);
+    expect(vault.entries.size).toBe(0);
+    expect(fs.existsSync(configPath)).toBe(false);
   });
 
-  describe('environment variable credential overrides', () => {
-    const addWork = (manager: AccountManager, name = 'Work Gmail') => manager.addAccount({
-      name,
-      host: 'imap.test.com',
-      port: 993,
-      user: 'stored-user@test.com',
-      password: 'stored-pass',
-      tls: true,
-    });
-
-    it('overrides IMAP user and password from env vars in getAccount', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_USERNAME = 'env-user@test.com';
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-      const created = await addWork(manager);
-
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('env-user@test.com');
-      expect(account?.password).toBe('env-pass');
-    });
-
-    it('normalizes the account name to build the env var prefix', async () => {
-      process.env.IMAP_MCP_ACCOUNT_MY_WORK_ACCOUNT__IMAP_USERNAME = 'env@test.com';
-
-      const manager = new AccountManager();
-      const created = await manager.addAccount({
-        name: 'My Work-Account!',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'stored@test.com',
-        password: 'stored',
-        tls: true,
-      });
-
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('env@test.com');
-    });
-
-    it('applies overrides in getAllAccounts and getAccountByName too', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-      await addWork(manager);
-
-      expect(manager.getAllAccounts()[0].password).toBe('env-pass');
-      expect(manager.getAccountByName('Work Gmail')?.password).toBe('env-pass');
-    });
-
-    it('leaves fields untouched when no matching env var is set', async () => {
-      const manager = new AccountManager();
-      const created = await addWork(manager);
-
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('stored-user@test.com');
-      expect(account?.password).toBe('stored-pass');
-    });
-
-    it('overrides SMTP credentials separately when an smtp config exists', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_USERNAME = 'env-imap@test.com';
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_SMTP_USERNAME = 'env-smtp@test.com';
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_SMTP_PASSWORD = 'env-smtp-pass';
-
-      const manager = new AccountManager();
-      const created = await manager.addAccount({
-        name: 'Work Gmail',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'stored-user@test.com',
-        password: 'stored-pass',
-        tls: true,
-        smtp: {
-          host: 'smtp.test.com',
-          port: 587,
-          secure: false,
-          user: 'stored-smtp@test.com',
-          password: 'stored-smtp-pass',
-        },
-      });
-
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('env-imap@test.com');
-      expect(account?.smtp?.user).toBe('env-smtp@test.com');
-      expect(account?.smtp?.password).toBe('env-smtp-pass');
-    });
-
-    it('ignores SMTP env vars when the account has no smtp config', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_SMTP_USERNAME = 'env-smtp@test.com';
-
-      const manager = new AccountManager();
-      const created = await addWork(manager);
-
-      const account = manager.getAccount(created.id);
-      expect(account?.smtp).toBeUndefined();
-    });
-
-    it('captures and removes the env vars from process.env in the constructor', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_USERNAME = 'env-user@test.com';
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      // Construction alone consumes them — no getter call needed
-      new AccountManager();
-
-      expect(process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_USERNAME).toBeUndefined();
-      expect(process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD).toBeUndefined();
-    });
-
-    it('keeps applying the override after the env var is consumed', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-      const created = await addWork(manager);
-
-      // Env var already consumed at construction, override still applies on every read
-      expect(process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD).toBeUndefined();
-      expect(manager.getAccount(created.id)?.password).toBe('env-pass');
-      expect(manager.getAccount(created.id)?.password).toBe('env-pass');
-    });
-
-    it('holds neither the cache key nor the value as plaintext', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-
-      const cache = (manager as any).capturedEnvOverrides as Map<string, string>;
-      expect(cache.size).toBe(1);
-
-      // The plaintext variable name is not used as the key
-      expect(cache.has('IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD')).toBe(false);
-
-      const [key, value] = [...cache.entries()][0];
-      expect(key).not.toContain('WORK_GMAIL'); // key does not leak the account name
-      expect(value).not.toBe('env-pass'); // value is encrypted
-      expect(value).toContain(':'); // iv:ciphertext form
-    });
-
-    it('does not persist env overrides to disk', async () => {
-      process.env.IMAP_MCP_ACCOUNT_WORK_GMAIL_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-      const created = await addWork(manager);
-
-      manager.getAccount(created.id);
-
-      // No write happened just from reading
-      const writes = vi.mocked(fs.writeFile).mock.calls;
-      const lastWrite = writes[writes.length - 1];
-      const saved = JSON.parse(lastWrite[1] as string);
-      expect(saved[0].password).not.toBe('env-pass');
-    });
-
-    it('round-trips an empty password placeholder added via addAccount', async () => {
-      const manager = new AccountManager();
-
-      const created = await manager.addAccount({
-        name: 'Env Managed',
-        host: 'imap.test.com',
-        port: 993,
-        user: '',
-        password: '',
-        tls: true,
-      });
-
-      // No decrypt crash; empty placeholders come back as empty strings
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('');
-      expect(account?.password).toBe('');
-    });
-
-    it('lets env vars fill an empty placeholder stored for an account', async () => {
-      process.env.IMAP_MCP_ACCOUNT_ENV_MANAGED_IMAP_USERNAME = 'env-user@test.com';
-      process.env.IMAP_MCP_ACCOUNT_ENV_MANAGED_IMAP_PASSWORD = 'env-pass';
-
-      const manager = new AccountManager();
-      const created = await manager.addAccount({
-        name: 'Env Managed',
-        host: 'imap.test.com',
-        port: 993,
-        user: '',
-        password: '',
-        tls: true,
-      });
-
-      const account = manager.getAccount(created.id);
-      expect(account?.user).toBe('env-user@test.com');
-      expect(account?.password).toBe('env-pass');
-    });
-
-    it('round-trips an empty password placeholder set via updateAccount', async () => {
-      const manager = new AccountManager();
-
-      const created = await manager.addAccount({
-        name: 'Later Env Managed',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'stored-user@test.com',
-        password: 'stored-pass',
-        tls: true,
-      });
-
-      // Marking the field env-managed on edit stores an empty placeholder
-      await manager.updateAccount(created.id, { password: '' });
-
-      // Must not crash on decrypt; comes back as an empty string
-      const account = manager.getAccount(created.id);
-      expect(account?.password).toBe('');
-    });
+  it('ignores environment overrides for system-keychain accounts', async () => {
+    vi.stubEnv('IMAP_MCP_ACCOUNT_WORK_IMAP_PASSWORD', 'ambient-override');
+    const service = manager();
+    const created = await service.addAccount(fixture);
+    expect(service.getAccount(created.id)?.password).toBe(fixture.password);
+    expect(process.env.IMAP_MCP_ACCOUNT_WORK_IMAP_PASSWORD).toBeUndefined();
   });
 
-  describe('malformed stored accounts', () => {
-    // A stored account whose credentials were never written (null user/password)
-    // must not crash listing — decrypt is called on the password unconditionally.
-    const loadAccounts = (accounts: unknown[]) => {
-      vi.mocked(readFileSync).mockImplementation(((p: any) => {
-        if (String(p).endsWith('.key')) return mockEncryptionKey;
-        return JSON.stringify(accounts);
-      }) as any);
-    };
-
-    it('lists an account with a null password without throwing', () => {
-      loadAccounts([
-        { id: 'bad', name: 'Private', user: null, password: null, host: 'imap.mail.me.com', port: 993, tls: true },
-      ]);
-
-      const manager = new AccountManager();
-
-      const accounts = manager.getAllAccounts();
-      expect(accounts).toHaveLength(1);
-      expect(accounts[0].name).toBe('Private');
-      expect(accounts[0].password).toBe('');
-    });
-
-    it('returns an empty password for a null/blank stored value via getAccount / getAccountByName', () => {
-      loadAccounts([
-        { id: 'bad', name: 'Private', user: null, password: null, host: 'imap.mail.me.com', port: 993, tls: true },
-      ]);
-
-      const manager = new AccountManager();
-
-      expect(manager.getAccount('bad')?.password).toBe('');
-      expect(manager.getAccountByName('Private')?.password).toBe('');
-    });
-
-    it('returns an empty password for an empty-string stored value', () => {
-      loadAccounts([
-        { id: 'empty', name: 'Private', user: '', password: '', host: 'imap.mail.me.com', port: 993, tls: true },
-      ]);
-
-      const manager = new AccountManager();
-
-      expect(manager.getAllAccounts()[0].password).toBe('');
-      expect(manager.getAccount('empty')?.password).toBe('');
-    });
-
-    it('throws on a non-empty but malformed (unencrypted) IMAP password', () => {
-      loadAccounts([
-        { id: 'corrupt', name: 'Private', user: 'me', password: 'not-encrypted', host: 'imap.mail.me.com', port: 993, tls: true },
-      ]);
-
-      const manager = new AccountManager();
-
-      expect(() => manager.getAllAccounts()).toThrow(/not a valid encrypted string/);
-      expect(() => manager.getAccount('corrupt')).toThrow(/not a valid encrypted string/);
-      expect(() => manager.getAccountByName('Private')).toThrow(/not a valid encrypted string/);
-    });
-
-    it('throws on a non-empty but malformed SMTP password', () => {
-      loadAccounts([
-        {
-          id: 'corrupt-smtp', name: 'Private', user: 'me', password: '', host: 'imap.mail.me.com', port: 993, tls: true,
-          smtp: { host: 'smtp.mail.me.com', port: 587, user: 'me', password: 'not-encrypted' },
-        },
-      ]);
-
-      const manager = new AccountManager();
-
-      expect(() => manager.getAllAccounts()).toThrow(/not a valid encrypted string/);
-    });
+  it('resolves accounts by id, name and an unambiguous default', async () => {
+    const service = manager();
+    expect(() => service.resolveAccountId()).toThrow(/No accounts/);
+    const created = await service.addAccount(fixture);
+    expect(service.resolveAccountId()).toBe(created.id);
+    expect(service.resolveAccountId(created.id)).toBe(created.id);
+    expect(service.resolveAccountId(undefined, 'Work')).toBe(created.id);
+    expect(service.getAccountByName('Work')?.id).toBe(created.id);
+    expect(service.getAllAccounts()).toHaveLength(1);
+    expect(service.getAccountByName('Missing')).toBeUndefined();
+    expect(() => service.resolveAccountId('Missing')).toThrow(/not found/);
+    expect(() => service.resolveAccountId(undefined, 'Missing')).toThrow(/No account named/);
+    await service.addAccount({ ...fixture, name: 'Other' });
+    expect(() => service.resolveAccountId()).toThrow(/Multiple accounts/);
   });
 
-  describe('removeAccount', () => {
-    it('should remove existing account', async () => {
-      const manager = new AccountManager();
+  it('refuses updates and removals of nonexistent accounts', async () => {
+    await expect(manager().updateAccount('none', { name: 'x' })).rejects.toThrow(/not found/);
+    await expect(manager().removeAccount('none')).rejects.toThrow(/not found/);
+  });
+});
 
-      const account = await manager.addAccount({
-        name: 'To Remove',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
+function fixtureWithoutId() { const { id: _id, ...rest } = fixture; return rest; }
 
-      await manager.removeAccount(account.id);
-
-      const retrieved = manager.getAccount(account.id);
-      expect(retrieved).toBeUndefined();
-    });
-
-    it('should throw error for non-existent account', async () => {
-      const manager = new AccountManager();
-
-      await expect(manager.removeAccount('non-existent')).rejects.toThrow(
-        'Account non-existent not found'
-      );
-    });
+describe('legacy migration', () => {
+  it('reads legacy accounts without modifying them, then verifies and migrates all passwords', async () => {
+    writeLegacyAccounts(configPath, [fixture, { ...fixture, id: 'second', name: 'Other' }]);
+    const before = fs.readFileSync(configPath, 'utf8');
+    const service = manager();
+    expect(service.getAccount('legacy')).toMatchObject(fixture);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
+    expect(service.listAccountMetadata()[0].credentialStorage).toBe('legacy');
+    expect(await service.migrateCredentials()).toEqual({ migrated: 2 });
+    expect(service.getAccount('legacy')).toMatchObject(fixture);
+    expect(stored().every((record: any) => record.credentialRef && !record.password && !record.smtp.password)).toBe(true);
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(false);
+    expect(await service.migrateCredentials()).toEqual({ migrated: 0 });
+    expect(vault.entries.size).toBe(2);
   });
 
-  describe('updateAccount', () => {
-    it('should update account fields', async () => {
-      const manager = new AccountManager();
+  it('migrates a single account on edit but preserves the legacy key for remaining accounts', async () => {
+    writeLegacyAccounts(configPath, [fixture, { ...fixture, id: 'second' }]);
+    const service = manager();
+    await service.updateAccount('legacy', { name: 'Renamed' });
+    expect(service.getAccount('legacy')?.password).toBe(fixture.password);
+    expect(service.getAccount('second')?.password).toBe(fixture.password);
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(true);
+  });
 
-      const account = await manager.addAccount({
-        name: 'Original Name',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
+  it('imports legacy environment values once and ignores subsequent overrides', async () => {
+    writeLegacyAccounts(configPath, [{ ...fixture, password: '', user: '' }]);
+    vi.stubEnv('IMAP_MCP_ACCOUNT_WORK_IMAP_PASSWORD', 'legacy-env-fixture');
+    vi.stubEnv('IMAP_MCP_ACCOUNT_WORK_IMAP_USERNAME', 'env-user');
+    const service = manager();
+    await service.migrateCredentials();
+    vi.stubEnv('IMAP_MCP_ACCOUNT_WORK_IMAP_PASSWORD', 'new-ambient-value');
+    expect(manager().getAccount('legacy')).toMatchObject({ password: 'legacy-env-fixture', user: 'env-user' });
+  });
 
-      const updated = await manager.updateAccount(account.id, {
-        name: 'New Name',
-      });
+  it('retains the entire old file and key if any account cannot be migrated', async () => {
+    writeLegacyAccounts(configPath, [fixture, { ...fixture, id: 'missing', name: 'Missing', password: '' }]);
+    const before = fs.readFileSync(configPath, 'utf8');
+    await expect(manager().migrateCredentials()).rejects.toThrow(/missing username or password/);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(true);
+    expect(vault.entries.size).toBe(0);
+  });
 
-      expect(updated.name).toBe('New Name');
-      expect(updated.host).toBe('imap.test.com'); // Unchanged
-    });
+  it('rolls back migration when read-back verification fails', async () => {
+    writeLegacyAccounts(configPath, [fixture]);
+    const before = fs.readFileSync(configPath, 'utf8');
+    vi.spyOn(vault, 'get').mockReturnValue('incorrect read-back');
+    await expect(manager().migrateCredentials()).rejects.toThrow(/could not verify/);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(true);
+    expect(vault.entries.size).toBe(0);
+  });
 
-    it('should encrypt new password on update', async () => {
-      const manager = new AccountManager();
+  it('retains legacy copies and cleans new entries if the JSON commit fails', async () => {
+    writeLegacyAccounts(configPath, [fixture]);
+    const before = fs.readFileSync(configPath, 'utf8');
+    vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(new Error('simulated disk failure'));
+    await expect(manager().migrateCredentials()).rejects.toThrow(/disk failure/);
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before);
+    expect(fs.existsSync(path.join(dir, '.key'))).toBe(true);
+    expect(vault.entries.size).toBe(0);
+  });
 
-      const account = await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'oldpass',
-        tls: true,
-      });
-
-      const updated = await manager.updateAccount(account.id, {
-        password: 'newpass',
-      });
-
-      expect(updated.password).toBe('newpass'); // Returns decrypted
-    });
-
-    it('should throw error for non-existent account', async () => {
-      const manager = new AccountManager();
-
-      await expect(
-        manager.updateAccount('non-existent', { name: 'New' })
-      ).rejects.toThrow('Account with id non-existent not found');
-    });
-
-    it('should preserve id on update', async () => {
-      const manager = new AccountManager();
-
-      const account = await manager.addAccount({
-        name: 'Test',
-        host: 'imap.test.com',
-        port: 993,
-        user: 'user@test.com',
-        password: 'secret',
-        tls: true,
-      });
-
-      const updated = await manager.updateAccount(account.id, {
-        name: 'Updated',
-      });
-
-      expect(updated.id).toBe(account.id);
-    });
+  it('never replaces a missing or corrupt legacy key', () => {
+    writeLegacyAccounts(configPath, [fixture]);
+    const keyPath = path.join(dir, '.key');
+    fs.unlinkSync(keyPath);
+    expect(manager().listAccountMetadata()).toHaveLength(1);
+    expect(() => manager().getAccount('legacy')).toThrow(/Restore the original .key/);
+    expect(fs.existsSync(keyPath)).toBe(false);
+    fs.writeFileSync(keyPath, 'invalid');
+    expect(() => manager().getAccount('legacy')).toThrow(/Restore the original .key/);
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe('invalid');
   });
 });

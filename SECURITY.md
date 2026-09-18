@@ -86,17 +86,20 @@ tests or write them to diagnostic logs.
 If you discover a security issue, please report it **privately** — do not open a
 public issue with exploit details.
 
-- **Preferred:** use GitHub's **[Report a vulnerability](https://github.com/nikolausm/imap-mcp-server/security/advisories/new)**
-  (Security → Advisories) to open a private advisory. Private vulnerability
-  reporting is enabled on this repository, so this form works and routes the
-  report only to the maintainer.
-- **By email:** write to **security.imap-mcp-server@minicon.eu**. Please do not
-  include exploit details in an unencrypted first email if you can avoid it —
-  a heads-up plus a request for a secure channel is enough to get started.
-- **If neither is available to you:** open a regular GitHub issue that says only
-  that you have a security report and asks for a private contact channel —
-  **without** any details, reproduction steps, or exploit information. The
-  maintainer will follow up privately.
+This repository is a fork (see [NOTICE.md](NOTICE.md)). Report what you find
+here, to this fork — the upstream maintainer cannot fix code that only exists in
+this copy, and a report sent there will not reach anyone who can act on it.
+
+- **Preferred:** use GitHub's **[Report a vulnerability](https://github.com/alepee/imap-mcp-server/security/advisories/new)**
+  (Security → Advisories) to open a private advisory, which routes the report
+  only to this repository's maintainer.
+- **If that is unavailable to you:** open a regular GitHub issue saying only
+  that you have a security report and asking for a private contact channel —
+  **without** any details, reproduction steps, or exploit information.
+
+If the issue also affects [the original project](https://github.com/nikolausm/imap-mcp-server),
+say so: it needs reporting there too, through its own channels, and coordinating
+the disclosure is better than one of us patching in the dark.
 
 Please include reproduction steps and affected versions in the private report.
 We aim to acknowledge reports promptly, investigate, and ship a fix with a

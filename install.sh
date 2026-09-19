@@ -38,7 +38,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     cd "$INSTALL_DIR"
     git pull
 else
-    git clone https://github.com/nikolausm/imap-mcp-server.git "$INSTALL_DIR"
+    git clone https://github.com/alepee/imap-mcp-server.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
@@ -130,8 +130,8 @@ echo "   - imap_search_emails   : Search for emails"
 echo "   - imap_get_email       : Read email content"
 echo "   - ... and more!"
 echo ""
-echo "🔒 Security: Your credentials are encrypted and stored in:"
-echo "   $HOME/.imap-mcp/"
+echo "🔒 Security: Passwords are stored in your OS keychain."
+echo "   Account settings: $HOME/.imap-mcp/"
 echo ""
 echo "📖 For more information, visit:"
-echo "   https://github.com/nikolausm/imap-mcp-server"
+echo "   https://github.com/alepee/imap-mcp-server"

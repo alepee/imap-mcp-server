@@ -1,6 +1,8 @@
 # IMAP MCP Server
 
-A powerful Model Context Protocol (MCP) server that provides seamless IMAP email integration with secure account management and connection pooling.
+A Model Context Protocol (MCP) server that gives an AI assistant access to IMAP and SMTP mailboxes, with account management and connection pooling.
+
+> **This is a fork** of [nikolausm/imap-mcp-server](https://github.com/nikolausm/imap-mcp-server) by Michael Nikolaus, carrying security fixes and a reworked provider catalogue. It is **not published to npm**, so every instruction below installs it from source. See [NOTICE.md](NOTICE.md) for what came from upstream, what changed here, and the licence terms.
 
 ## Features
 
@@ -21,33 +23,31 @@ A powerful Model Context Protocol (MCP) server that provides seamless IMAP email
 > end-of-life, and several of this package's dependencies no longer support
 > them. Check yours with `node --version`.
 
-### Run via npx (No Installation Required)
+> **No `npx` install.** The `imap-mcp-server` package on npm is the upstream
+> project; this fork is not published there. `npx -y imap-mcp-server` would
+> fetch upstream and none of the changes described in [NOTICE.md](NOTICE.md).
+> Build from source instead.
 
-Once published to npm, you can run the server directly without cloning or building anything — `npx` downloads the prebuilt package and runs it:
-
-```bash
-npx -y imap-mcp-server
-```
-
-This is the easiest way to use the server in an MCP client (see [Configuration](#configuration) for ready-to-paste `npx` configs).
-
-### Quick Install (Recommended)
+### Quick install
 
 #### macOS/Linux:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikolausm/imap-mcp-server/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alepee/imap-mcp-server/main/install.sh | bash
 ```
 
 #### Windows (PowerShell as Administrator):
 ```powershell
-iwr -useb https://raw.githubusercontent.com/nikolausm/imap-mcp-server/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/alepee/imap-mcp-server/main/install.ps1 | iex
 ```
 
-### Manual Installation
+Read a script before piping it into a shell. Both clone this repository, build
+it, and write an MCP client configuration.
+
+### Manual installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nikolausm/imap-mcp-server.git
+git clone https://github.com/alepee/imap-mcp-server.git
 cd imap-mcp-server
 ```
 
@@ -63,27 +63,24 @@ npm run build
 
 ## Account Setup
 
-Accounts are stored encrypted in `~/.imap-mcp/accounts.json`. This file is **shared by all run modes** — whether you start the server via `npx`, a global install, or a local clone, they all read the same accounts. So you only need to set up your accounts once.
+Account settings live in `~/.imap-mcp/accounts.json`; passwords live in your
+operating system's keychain (see [Where credentials live](#where-credentials-live)
+below). Both are **shared by every way you start the server**, so you set an
+account up once.
 
-### Setting Up Accounts in npx Mode
+### Two ways to add an account
 
-If you run the server via `npx` (no clone), you have two ways to add accounts:
+**Option A — the setup wizard**, covered in the next section. It runs locally,
+takes the password in a browser form, and writes it straight to the keychain.
 
-**Option A — Run the setup wizard directly via npx (no install needed):**
+**Option B — from your AI client**, using the `imap_add_account` tool:
 
-```bash
-npx -p imap-mcp-server imap-setup
-```
+> "Add my IMAP account: host imap.gmail.com, port 993, user me@gmail.com"
 
-This launches the same web-based wizard described below and writes to `~/.imap-mcp/accounts.json`, which your `npx`-configured MCP server then picks up automatically.
-
-**Option B — Add accounts straight from your AI client:**
-
-Once the MCP server is configured, just ask your assistant to add an account — it uses the `imap_add_account` tool. For example:
-
-> "Add my IMAP account: host imap.gmail.com, port 993, user me@gmail.com, password …"
-
-No separate setup step required.
+Convenient, but be aware of what it costs: a password passed as a tool argument
+travels through the model, and lands in the conversation transcript, the MCP
+client's logs, and the context sent to the model provider. Prefer the wizard for
+anything you care about.
 
 ### Web-Based Setup Wizard (Recommended)
 
@@ -97,12 +94,6 @@ Or if installed globally:
 
 ```bash
 imap-setup
-```
-
-Or directly via npx without installing:
-
-```bash
-npx -p imap-mcp-server imap-setup
 ```
 
 This will:
@@ -166,16 +157,6 @@ The setup wizard includes pre-configured settings for:
 
 ### Claude Code (CLI)
 
-#### Option A — via npx (no clone/build needed)
-
-```bash
-claude mcp add imap -- npx -y imap-mcp-server
-```
-
-This always runs the latest published version and requires no local build.
-
-#### Option B — from a local clone
-
 If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in the terminal, add the MCP server with a single command:
 
 **Step 1:** Make sure you have built the project first (see [Manual Installation](#manual-installation)).
@@ -215,22 +196,6 @@ Add the IMAP MCP server to your Claude Desktop configuration file:
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-**Option A — via npx (recommended, no clone/build needed):**
-
-```json
-{
-  "mcpServers": {
-    "imap": {
-      "command": "npx",
-      "args": ["-y", "imap-mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-**Option B — from a local clone:**
-
 ```json
 {
   "mcpServers": {
@@ -261,8 +226,8 @@ to a mailbox, or expose only a hand-picked subset of tools.
 {
   "mcpServers": {
     "imap": {
-      "command": "npx",
-      "args": ["-y", "imap-mcp-server"],
+      "command": "node",
+      "args": ["/path/to/imap-mcp-server/dist/index.js"],
       "env": { "IMAP_MCP_READ_ONLY": "true" }
     }
   }
@@ -275,8 +240,8 @@ to a mailbox, or expose only a hand-picked subset of tools.
 {
   "mcpServers": {
     "imap": {
-      "command": "npx",
-      "args": ["-y", "imap-mcp-server"],
+      "command": "node",
+      "args": ["/path/to/imap-mcp-server/dist/index.js"],
       "env": { "IMAP_MCP_ENABLED_TOOLS": "imap_search_emails,imap_get_email,imap_get_latest_emails" }
     }
   }
@@ -898,10 +863,18 @@ The server automatically configures SMTP settings based on your IMAP provider. I
   - Port: 993
   - Requires app-specific password
 
+## Credits
+
+This project is a fork of **[nikolausm/imap-mcp-server](https://github.com/nikolausm/imap-mcp-server)** by **Michael Nikolaus**, who wrote effectively all of what is described above: the architecture, the tool surface, the IMAP and SMTP services, the setup wizard and the test suite.
+
+The changes made in this fork, and what they do, are listed in [NOTICE.md](NOTICE.md).
+
+Michael Nikolaus has not reviewed or endorsed this fork. Report anything that misbehaves here to [this repository's issues](https://github.com/alepee/imap-mcp-server/issues), not upstream.
+
 ## License
 
-MIT
+MIT, as upstream. Copyright (c) 2024 Michael Nikolaus for the original work; modifications in this fork are Copyright (c) 2026 Antoine Lepee and released under the same terms. The full text and both notices are in [`LICENSE`](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Pull requests are welcome. Fixes that apply to the original project are offered upstream rather than kept here, so say so if your change is one of those.

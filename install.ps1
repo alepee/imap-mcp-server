@@ -42,7 +42,7 @@ if (Test-Path "$installDir\.git") {
     Set-Location $installDir
     git pull
 } else {
-    git clone https://github.com/nikolausm/imap-mcp-server.git $installDir
+    git clone https://github.com/alepee/imap-mcp-server.git $installDir
     Set-Location $installDir
 }
 
@@ -129,4 +129,4 @@ Write-Host "🔒 Security: Your credentials are encrypted and stored in:" -Foreg
 Write-Host "   $env:USERPROFILE\.imap-mcp\" -ForegroundColor White
 Write-Host ""
 Write-Host "📖 For more information, visit:" -ForegroundColor Cyan
-Write-Host "   https://github.com/nikolausm/imap-mcp-server" -ForegroundColor White
+Write-Host "   https://github.com/alepee/imap-mcp-server" -ForegroundColor White

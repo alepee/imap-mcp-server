@@ -5,6 +5,7 @@ import { ImapAccount, EmailComposer, SmtpConfig } from '../types/index.js';
 import { parseSerializedArray } from '../utils/array-input.js';
 import { getProviderById, getProviders } from '../providers/catalogue.js';
 import { assertCredentialsResolved } from '../utils/env-credentials.js';
+import { randomUUID } from 'crypto';
 
 export class SmtpService {
   private transporters: Map<string, nodemailer.Transporter> = new Map();
@@ -140,22 +141,41 @@ export class SmtpService {
   // envelope-only). Without it, imap_save_draft and Sent-folder copies drop
   // Bcc even when resolveBcc / defaultBcc injected recipients into email.bcc.
   async composeRaw(account: ImapAccount, email: EmailComposer): Promise<Buffer> {
-    const message = new MailComposer(this.toMailOptions(account, email)).compile();
+    return SmtpService.buildRaw(this.toMailOptions(account, email));
+  }
+
+  private static buildRaw(mailOptions: nodemailer.SendMailOptions): Promise<Buffer> {
+    const message = new MailComposer(mailOptions).compile();
     message.keepBcc = true;
     return message.build();
+  }
+
+  // `<uuid@domain-of-from>`, the same shape nodemailer generates itself.
+  private static generateMessageId(from: nodemailer.SendMailOptions['from']): string {
+    const address = typeof from === 'string' ? from : (from as { address?: string } | undefined)?.address || '';
+    const domain = address.match(/@([^\s<>@]+)>?\s*$/)?.[1] || 'localhost';
+    return `<${randomUUID()}@${domain}>`;
   }
 
   async sendEmail(accountId: string, account: ImapAccount, email: EmailComposer): Promise<{ messageId: string; rawMessage?: Buffer }> {
     try {
       const mailOptions = this.toMailOptions(account, email);
+      // Fix Message-ID and Date up front: the Sent copy is composed separately
+      // from the SMTP send, and each composition would otherwise generate its
+      // own, so the stored copy (and replies to it) wouldn't match what was
+      // delivered or the messageId we return (#187).
+      mailOptions.messageId = SmtpService.generateMessageId(mailOptions.from);
+      mailOptions.date = new Date();
       const transporter = await this.createTransporter(account);
 
       // Build raw message for IMAP Sent folder append
       let rawMessage: Buffer | undefined;
       try {
-        const message = new MailComposer(mailOptions).compile();
-        message.keepBcc = true;
-        rawMessage = await message.build();
+        rawMessage = await SmtpService.buildRaw({
+          ...this.toMailOptions(account, email),
+          messageId: mailOptions.messageId,
+          date: mailOptions.date,
+        });
       } catch {
         // Non-critical: sent folder copy will be skipped
       }

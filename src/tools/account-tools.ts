@@ -29,9 +29,10 @@ export function accountTools(
       sentFolder: z.string().optional().describe('Explicit Sent-folder name for saving sent-mail copies (e.g. "Gesendet"). Only needed when auto-detection fails — the server must lack a \\Sent SPECIAL-USE folder. Check names with imap_list_folders'),
       defaultBcc: z.union([z.string(), z.array(z.string())]).optional().describe('Optional BCC address(es) applied automatically to every outbound send, reply, forward, and draft for this account. Merged with any per-call bcc'),
       tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Needed for a local bridge serving a self-signed certificate, e.g. Proton Mail Bridge on 127.0.0.1:1143. Scoped to this account only'),
+      allowedFrom: z.array(z.string()).optional().describe('Additional sender identities allowed in the From header. The account email and login are always allowed.'),
       provider: z.string().optional().describe('Catalogue provider id this account is based on, e.g. "gmail", "protonmail" (see imap_list_accounts output or the setup wizard). Fills in any host/port/security left unspecified, and is recorded on the account so nothing has to be guessed from the email domain later'),
     }
-  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc, tlsCa, provider }) => {
+  }, async ({ name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, sentFolder, defaultBcc, tlsCa, provider, allowedFrom }) => {
     // A provider is a template: its values fill the gaps at write time and the
     // complete result is stored. Nothing is resolved from the catalogue when
     // connecting, so a later catalogue change cannot alter this account.
@@ -74,6 +75,7 @@ export function accountTools(
         ? { defaultBcc }
         : {}),
       ...(tlsCa ? { tlsCa } : {}),
+      ...(allowedFrom?.length ? { allowedFrom } : {}),
     });
 
     return {
@@ -109,8 +111,9 @@ export function accountTools(
       sentFolder: z.string().optional().describe('Explicit Sent-folder name for saving sent-mail copies (e.g. "Gesendet"). Overrides auto-detection; pass an empty string to clear the override and re-enable auto-detection. Check names with imap_list_folders'),
       defaultBcc: z.union([z.string(), z.array(z.string())]).optional().describe('Optional BCC address(es) applied automatically to every outbound message for this account. Pass an empty string to clear'),
       tlsCa: z.string().optional().describe('Extra CA certificate to trust for this account\'s IMAP TLS: a path to a PEM file (a leading ~ is expanded) or the PEM text itself. Pass an empty string to clear and go back to the system trust store'),
+      allowedFrom: z.array(z.string()).optional().describe('Additional sender identities allowed in the From header. Pass an empty array to clear.'),
     }
-  }, async ({ accountId, name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, saveToSent, sentFolder, defaultBcc, tlsCa }) => {
+  }, async ({ accountId, name, host, port, user, password, tls, email, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, saveToSent, sentFolder, defaultBcc, tlsCa, allowedFrom }) => {
     const updates: any = {};
     if (name !== undefined) updates.name = name;
     if (host !== undefined) updates.host = host;
@@ -129,6 +132,9 @@ export function accountTools(
       } else {
         updates.defaultBcc = defaultBcc;
       }
+    }
+    if (allowedFrom !== undefined) {
+      updates.allowedFrom = allowedFrom.length === 0 ? undefined : allowedFrom;
     }
 
     // Empty string clears the CA and restores the default trust store.

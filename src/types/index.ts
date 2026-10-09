@@ -33,6 +33,8 @@ export interface ImapAccount {
    * Bridge on 127.0.0.1:1143. Scoped to this account: it never widens trust for
    * any other connection the process makes. */
   tlsCa?: string;
+  /** Additional sender identities accepted by outbound tools. */
+  allowedFrom?: string[];
 }
 
 export interface SmtpConfig {

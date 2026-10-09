@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Send-as aliases (#192). `imap_send_email`, `imap_save_draft`, `imap_reply_to_email` and `imap_forward_email` accept an optional `from`. Accepted senders are the account's email, its login (if that is an email address), and addresses configured in the new optional `allowedFrom` account field (set via `imap_add_account` / `imap_update_account`). The value must parse to exactly one mailbox, so multiple addresses, groups and CR/LF header injection are rejected. Addresses are matched case-insensitively, and the display name is kept. Reply-all also leaves out configured aliases. `allowedFrom` is an application-level guardrail, not a security boundary: the SMTP server enforces the real sender policy.
+
 ### Fixed
 - `imap_save_draft` and Sent-folder copies now keep `Bcc` headers in the stored MIME. Nodemailer's `MailComposer` omits Bcc from the built message by default (SMTP envelope only), so even when `defaultBcc` / a call-site `bcc` was merged into the composer, the appended draft or Sent copy had no `Bcc:` line and mail clients showed an empty BCC field. `SmtpService.composeRaw` now sets `keepBcc` on the compiled message. SMTP delivery was already correct; only the IMAP-stored copy was missing the header. Tests in `tests/smtp-service-compose-raw-bcc.test.ts`.
 

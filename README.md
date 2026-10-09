@@ -287,6 +287,8 @@ Once configured, the IMAP MCP server provides the following tools in Claude:
       "Local bridges" below
   - provider: Catalogue provider id, e.g. `gmail`, `protonmail`. Fills in any
       host/port/security you leave out, and is recorded on the account
+  - allowedFrom: Optional list of additional sender identities permitted in
+      outbound `From` headers. The account email and login are always allowed
   ```
 
 #### Provider catalogue
@@ -340,7 +342,16 @@ back to cleartext). An invalid file is reported and ignored, never fatal.
       string to clear
   - tlsCa: Extra CA certificate for this account's IMAP TLS (optional). Pass an
       empty string to clear it and go back to the system trust store
+  - allowedFrom: Optional list of additional sender identities. Pass an empty
+      array to clear
   ```
+
+`allowedFrom` is an application-level guardrail, not a hard security boundary:
+an agent with access to `imap_update_account` can change the allowed identities.
+The SMTP server must enforce the actual sender authorization policy. Sender
+mailbox addresses are matched case-insensitively; the supplied display name and
+address casing are preserved in the outbound `From` header. This applies to
+sending, drafts, replies, and forwards.
 
 #### Local bridges (Proton Mail Bridge, and friends)
 
@@ -573,6 +584,8 @@ server talks to.
   ```
   Parameters:
   - accountId: Account ID to send from
+  - from: Sender identity (optional). Must match the account email/login or an
+      address configured in `allowedFrom`
   - to: Recipient email address(es) — an array, or a single comma-separated string
   - subject: Email subject
   - text: Plain text content (optional)

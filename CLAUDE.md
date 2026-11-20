@@ -15,7 +15,7 @@ security rules, and conventions — lives in **@AGENTS.md**. Read it first.
   1. Implement it in the relevant service (`ImapService` / `SmtpService`).
   2. Expose it via the matching tool file in `src/tools/`.
   3. Keep tool names (`imap_*`) stable; write LLM-oriented `.describe()` text.
-  4. Update types in `src/types/index.ts`, plus `README.md` and tests.
+  4. Update types in `src/types/index.ts`, plus `docs/tools.md` and tests.
 - Before committing `src/` changes: `npm run build && npm test` (keep it green).
 - Follow the security rules in @AGENTS.md — no secret logging, no telemetry,
   no destructive mail ops without explicit guard logic.

@@ -413,37 +413,4 @@ export class SpamService {
   getWhitelistDomains(): string[] {
     return [...this.customWhitelistDomains];
   }
-
-  // Check domain against IPQualityScore API (if configured)
-  async checkDomainReputation(domain: string): Promise<{
-    score?: number;
-    suspicious?: boolean;
-    disposable?: boolean;
-    error?: string;
-  }> {
-    const apiKey = process.env.IPQUALITYSCORE_API_KEY;
-    if (!apiKey) {
-      return { error: 'IPQualityScore API key not configured' };
-    }
-
-    try {
-      const response = await fetch(
-        `https://www.ipqualityscore.com/api/json/email/${apiKey}/${encodeURIComponent(`test@${domain}`)}`
-      );
-
-      if (!response.ok) {
-        return { error: `API request failed: ${response.status}` };
-      }
-
-      const data = await response.json() as any;
-
-      return {
-        score: data.fraud_score,
-        suspicious: data.suspicious,
-        disposable: data.disposable,
-      };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : 'API request failed' };
-    }
-  }
 }

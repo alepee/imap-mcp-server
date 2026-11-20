@@ -198,7 +198,7 @@ describe('account tools allowedFrom configuration', () => {
       registerTool: vi.fn((name: string, _schema: any, handler: Function) => {
         handlers[name] = handler;
       }),
-    } as any, mockAccountManager as any, {} as any, {} as any);
+    } as any, mockAccountManager as any, { disconnect: vi.fn() } as any, { disconnect: vi.fn() } as any);
   });
 
   it('stores allowed sender aliases when adding an account', async () => {

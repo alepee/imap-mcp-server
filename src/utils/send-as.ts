@@ -9,10 +9,11 @@ export function parseSingleMailbox(value: string): string {
   }
 
   const parsed = addressparser(trimmed);
-  if (parsed.length !== 1 || !parsed[0].address || parsed[0].group) {
+  const entry = parsed.length === 1 ? parsed[0] : undefined;
+  if (!entry || 'group' in entry || !entry.address) {
     throw new Error('Sender must contain exactly one mailbox');
   }
-  return parsed[0].address.toLowerCase();
+  return entry.address.toLowerCase();
 }
 
 export function allowedFromAddresses(account: ImapAccount): Set<string> {
